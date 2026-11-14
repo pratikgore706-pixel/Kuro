@@ -1,0 +1,66 @@
+import { useEffect, useMemo, useRef, useState } from 'react'
+import type { Site } from './data/sites'
+import { computeSeries, computeSky, makeFrame, newSky, nextEvent, SPHERE_HORIZON, summarize, type Horizon } from './engine/sky'
+import { DAY } from './engine/time'
+import { computeHorizon, makeSampler, type MoonData } from './explorer/moonData'
+import { useStore } from './store'
+
+const horizonCache = new Map<string, Horizon>()
+
+/**
+ * Horizon model for a site: the real LOLA terrain skyline when elevation data is installed, otherwise the
+ * ideal smooth sphere. Cached per coordinate.
+ */
+export function horizonFor(site: { lat: number; lon: number }, data: MoonData | null): Horizon {
+  const s = data ? makeSampler(data) : null
+  if (!s) return SPHERE_HORIZON
+  const key = `${site.lat.toFixed(5)},${site.lon.toFixed(5)}`
+  let h = horizonCache.get(key)
+  if (!h) {
+    const mask = computeHorizon(s, site.lat, site.lon)
+    h = { kind: 'terrain', mask, source: `Terrain horizon from ${s.describe(site.lat)}, observer 2 m above ground, out to 300 km.` }
+    horizonCache.set(key, h)
+  }
+  return h
+}
+
+export function useHorizon(site: Site): Horizon {
+  const data = useStore((s) => s.moon)
+  return useMemo(() => horizonFor(site, data), [site.lat, site.lon, data])
+}
+
+export const useFrame = (site: Site) => useMemo(() => makeFrame(site.lat, site.lon), [site.lat, site.lon])
+
+export function useSeries(site: Site, landingMs: number, days: number, samples = 960) {
+  const f = useFrame(site), h = useHorizon(site)
+  return useMemo(() => {
+    const n = Math.max(120, Math.min(samples, Math.round(days * 96)))
+    const series = computeSeries(f, h, landingMs, (days * DAY) / (n - 1), n)
+    return { series, summary: summarize(series) }
+  }, [f, h, landingMs, days, samples])
+}
+
+export function useSkyAt(site: Site, ms: number) {
+  const f = useFrame(site), h = useHorizon(site)
+  return useMemo(() => computeSky(f, h, ms, newSky()), [f, h, ms])
+}
+
+/** Next Sun / Earth visibility change. Recomputed at most once per simulated 10 minutes. */
+export function useEvents(site: Site, ms: number) {
+  const f = useFrame(site), h = useHorizon(site)
+  const bucket = Math.floor(ms / 600000)
+  return useMemo(() => ({ sun: nextEvent(f, h, bucket * 600000, 'sun'), earth: nextEvent(f, h, bucket * 600000, 'earth') }), [f, h, bucket])
+}
+
+export function useSize<T extends HTMLElement>() {
+  const ref = useRef<T>(null)
+  const [size, set] = useState({ w: 0, h: 0 })
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const ro = new ResizeObserver(() => set({ w: el.clientWidth, h: el.clientHeight }))
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+  return [ref, size] as const
+}
