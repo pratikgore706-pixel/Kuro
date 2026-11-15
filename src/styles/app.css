@@ -297,10 +297,18 @@ input::placeholder { color: var(--faint); }
 .hv-mission { position: absolute; left: clamp(20px, 5vw, 56px); bottom: clamp(20px, 4vh, 36px); z-index: 3; display: grid; gap: 3px; font-size: 9px; letter-spacing: 0.04em; color: var(--ash); }
 .hv-mission span:first-child { color: var(--dust); font-weight: 500; letter-spacing: 0.08em; }
 
-.hv-scroll-pos { position: absolute; right: clamp(20px, 5vw, 56px); bottom: clamp(20px, 4vh, 36px); z-index: 3; }
-.hv-scroll { display: flex; flex-direction: column; align-items: center; gap: 8px; color: var(--ash); }
-.hv-scroll span { font: 500 10px var(--mono); letter-spacing: 0.18em; }
+.hv-scroll-pos { position: absolute; right: clamp(16px, 5vw, 56px); bottom: clamp(18px, 4vh, 36px); z-index: 3; }
+.hv-scroll { display: flex; align-items: center; gap: 14px; padding: 12px 18px 12px 14px; border: 1px solid rgba(236, 232, 221, 0.22); border-radius: 999px; background: rgba(12, 14, 18, 0.42); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); box-shadow: 0 10px 34px rgba(0, 0, 0, 0.45); color: #ece8dd; animation: hv-cue-in 0.7s cubic-bezier(.2,.7,.2,1) 0.9s both; }
+.hv-scroll-txt { display: grid; gap: 2px; }
+.hv-scroll-txt b { font: 500 13.5px/1.2 var(--land-body, 'Inter Variable', sans-serif); letter-spacing: 0.01em; }
+.hv-scroll-txt small { font: 500 9.5px/1.2 var(--mono, monospace); letter-spacing: 0.12em; text-transform: uppercase; color: rgba(236, 232, 221, 0.6); }
+.hv-scroll-touch { display: none; }
+@media (hover: none) and (pointer: coarse) { .hv-scroll-touch { display: inline; } .hv-scroll-desk { display: none; } }
+.hv-scroll-arrow { color: #b5a18a; animation: hv-cue-bob 1.8s ease-in-out infinite; }
 .hv-scroll-dot { animation: hv-scrolldot 1.8s ease-in-out infinite; }
+@keyframes hv-cue-in { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: none; } }
+@keyframes hv-cue-bob { 0%, 100% { transform: translateY(-2px); } 50% { transform: translateY(3px); } }
+@media (max-width: 560px) { .hv-scroll-pos { left: 16px; right: 16px; display: flex; justify-content: center; } .hv-scroll { padding: 10px 16px 10px 12px; } .hv-scroll-txt small { display: none; } }
 
 @keyframes hv-rise { from { opacity: 0; transform: translate(-50%, 14px); } to { opacity: 1; transform: translate(-50%, 0); } }
 @keyframes hv-fade { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
@@ -416,7 +424,7 @@ input::placeholder { color: var(--faint); }
   .hv-earthwrap, .hv-head, .hv-copy { animation: none; }
   .hv-track { height: auto; }
   .hv-sun, .hv-story, .rdlg, .rtel { display: none; }
-  .hv-scroll-dot { animation: none; }
+  .hv-scroll-dot, .hv-scroll-arrow, .hv-scroll { animation: none; }
 }
 
 /* ---------- responsive ---------- */

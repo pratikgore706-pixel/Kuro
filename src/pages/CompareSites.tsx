@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { CirclePlay, Pause, RotateCcw } from 'lucide-react'
 import { useSearchParams } from 'react-router-dom'
+import { isLite, onLiteChange, watchFrameRate } from '../perf'
 import { CompareGuide } from '../components/compare/CompareGuide'
 import { CompareTour } from '../components/compare/CompareTour'
 import { CompareView } from '../components/compare/CompareView'
@@ -34,7 +35,11 @@ export function CompareSites() {
   const ready = horizonsReady >= SITES.length
   const { setLanding, setDays, setCursor, setPlaying, setSpeed, tick } = useStore()
   const margin = useEarthMargin()
-  const narrow = useNarrow()
+  // one 3D view at a time (with tabs) on narrow screens, and on slow devices, where four would stutter
+  const narrowScreen = useNarrow()
+  const [lite, setLiteState] = useState(isLite)
+  useEffect(() => { const off = onLiteChange(setLiteState); const stop = watchFrameRate(6000); return () => { off(); stop() } }, [])
+  const narrow = narrowScreen || lite
   // #/compare?site=ID (the Explorer's "Compare with other sites") puts that site in the first window
   const [params] = useSearchParams()
   const [slots, setSlots] = useState<(string | null)[]>(() => {

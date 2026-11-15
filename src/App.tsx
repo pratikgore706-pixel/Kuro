@@ -41,6 +41,16 @@ function Workspace() {
   )
 }
 
+/** About and Data: long reading pages with the same left menu as the Explorer; the page itself scrolls. */
+function DocLayout() {
+  return (
+    <div className="app app-doc">
+      <TopBar />
+      <Suspense fallback={<Loading label="Loading…" />}><Outlet /></Suspense>
+    </div>
+  )
+}
+
 let moonStarted = false
 function startMoonData() {
   if (moonStarted) return
@@ -63,8 +73,10 @@ export default function App() {
       <Suspense fallback={<Loading label="Loading…" />}>
         <Routes>
           <Route path="/" element={<Landing />} />
-          <Route path="/data" element={<NeedsEphemeris><Data /></NeedsEphemeris>} />
-          <Route path="/about" element={<About />} />
+          <Route element={<DocLayout />}>
+            <Route path="/data" element={<NeedsEphemeris><Data /></NeedsEphemeris>} />
+            <Route path="/about" element={<About />} />
+          </Route>
           <Route element={<Workspace />}>
             <Route path="/explorer" element={<ExplorerPage />} />
             <Route path="/mission" element={<Mission />} />

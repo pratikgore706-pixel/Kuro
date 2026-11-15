@@ -3,7 +3,6 @@ import { ArrowRight, ArrowUpRight } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { Section } from '../components/site/Section'
 import { SiteFooter } from '../components/site/SiteFooter'
-import { SiteNav } from '../components/site/SiteNav'
 import { useReveal } from '../components/site/useReveal'
 import { getEphemeris } from '../engine/ephemeris'
 import { checkAgainstHorizons } from '../engine/horizonsCheck'
@@ -69,7 +68,6 @@ export function Data() {
   return (
     <div className="kpage" ref={root}>
       <section className="kp-hero" aria-labelledby="data-title">
-        <SiteNav />
         <div className="kp-hero-body">
           <p className="kp-label reveal"><span>Data</span>NASA sources &amp; accuracy</p>
           <h1 id="data-title" className="reveal d1">Built on <em>NASA data.</em></h1>

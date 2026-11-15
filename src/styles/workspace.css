@@ -283,3 +283,17 @@
 .app .rail-item { color: var(--text-3); }
 .app .rail-item.active { background: transparent; color: var(--text); }
 .app .rail-item.active::before { background: #b5a18a; }
+
+/* About and Data: the page grows with its content and the window scrolls, so the left menu stays put */
+.app.app-doc { height: auto; min-height: 100%; background: #030507; }
+.app.app-doc > .kpage { min-width: 0; }
+.app.app-doc .kp-hero-body { padding-top: clamp(56px, 11vh, 120px); }
+
+/* ---------- lite mode (perf.ts): low-end devices keep every feature but drop the costly effects ---------- */
+/* a backdrop blur over a moving 3D view is recomputed on every frame; solid panels look nearly the same */
+html.lite *, html.lite *::before, html.lite *::after { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
+html.lite .xp .glass { background: rgba(13, 15, 18, 0.94); box-shadow: 0 10px 28px rgba(0, 0, 0, 0.4); }
+html.lite .xp-views-row, html.lite .xp-toolbar, html.lite .xp-skybtn, html.lite .xp-edge, html.lite .rail { background-color: rgba(10, 12, 15, 0.95); }
+html.lite .hv-scroll { background: rgba(12, 14, 18, 0.82); }
+html.lite .kg, html.lite .cmpx-modal { background: rgba(2, 3, 5, 0.9); }
+html.lite .grover, html.lite .rface-eyes { animation: none; }

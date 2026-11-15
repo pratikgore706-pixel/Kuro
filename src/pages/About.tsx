@@ -3,7 +3,6 @@ import { ArrowRight } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { Section } from '../components/site/Section'
 import { SiteFooter } from '../components/site/SiteFooter'
-import { SiteNav } from '../components/site/SiteNav'
 import { TEAM, initials } from '../components/site/team'
 import { useReveal } from '../components/site/useReveal'
 import '../styles/site.css'
@@ -18,7 +17,6 @@ export function About() {
   return (
     <div className="kpage" ref={root}>
       <section className="kp-hero" aria-labelledby="about-title">
-        <SiteNav />
         <div className="kp-earth" aria-hidden="true"><img src={`${HERO}earth.png`} alt="" /></div>
         <div className="kp-hero-body">
           <p className="kp-label reveal"><span>About us</span>Team The Selenites</p>

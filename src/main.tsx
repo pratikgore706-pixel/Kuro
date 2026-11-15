@@ -11,5 +11,9 @@ import './styles/app.css'
 import './styles/workspace.css'
 import './styles/explorer.css'
 import App from './App'
+import { applyPerfClass } from './perf'
+
+// low-end devices get the lighter look before the first paint (see perf.ts)
+applyPerfClass()
 
 createRoot(document.getElementById('root')!).render(<StrictMode><App /></StrictMode>)

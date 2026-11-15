@@ -8,6 +8,7 @@ import { LandingPicker } from '../components/LandingPicker'
 import { RankingPanel } from '../components/RankingPanel'
 import { useRanked } from '../components/useRanked'
 import { buildKuroRover } from './engine/KuroRover'
+import { isLite, onLiteChange, watchFrameRate } from '../perf'
 import { SiteList } from '../components/SiteList'
 import { SitePanel } from '../components/SitePanel'
 import { SkyChart } from '../components/SkyChart'
@@ -24,6 +25,11 @@ import { Controls, RoverHud } from './Controls'
 import type { RoverTelemetry } from './engine/Rover'
 import { HoverHud, MeasurePanel, ScaleBar, Tour, type TourStep } from './Overlays'
 import { signal } from './signal'
+
+/** 3D settings: lite = 30 fps, 1 device pixel, lighter rover terrain and no background terrain building. */
+const perfFor = (lite: boolean) => lite
+  ? { maxFps: 30, pixelRatio: 1, roverMesh: 640, prefetch: [] as ('pole' | 'site' | 'rover')[] }
+  : { maxFps: 60, pixelRatio: Math.min(window.devicePixelRatio || 1, 1.5) }
 
 const COMPASS = ['north', 'north-east', 'east', 'south-east', 'south', 'south-west', 'west', 'north-west']
 
@@ -137,10 +143,13 @@ export function ExplorerPage() {
       engine.current.setRoverModel(buildKuroRover())
       // smooth on every screen: at most 60 frames a second (fast monitors would draw up to 144) and at most
       // 1.5 device pixels per CSS pixel (2× costs nearly twice the work for little visible gain)
-      engine.current.setPerformance({ maxFps: 60, pixelRatio: Math.min(window.devicePixelRatio || 1, 1.5) })
+      engine.current.setPerformance(perfFor(isLite()))
       force((x) => x + 1)
     } catch { setWebgl(false) }
-    return () => { engine.current?.dispose(); engine.current = null }
+    // on a slow device the view drops to the lite settings by itself (and the panels lose their blur)
+    const offLite = onLiteChange((on) => engine.current?.setPerformance(perfFor(on)))
+    const stopWatch = watchFrameRate()
+    return () => { offLite(); stopWatch(); engine.current?.dispose(); engine.current = null }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 

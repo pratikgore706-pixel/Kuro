@@ -4,6 +4,7 @@ import { runs, sunState } from '../Timeline'
 import type { Series } from '../../engine/sky'
 import { ExplorerEngine, type CinePhase, type EngineStatus } from '../../explorer/engine/ExplorerEngine'
 import { buildKuroRover } from '../../explorer/engine/KuroRover'
+import { isLite } from '../../perf'
 import type { MoonData } from '../../explorer/moonData'
 import type { RankedSite } from '../../services/api'
 
@@ -176,7 +177,7 @@ export function CompareView({ r, rank, options, series, moon, landingMs, days, c
     const e = eng.current
     if (!e) return
     const focus = hover || expanded
-    e.setPerformance({ maxFps: focus ? 0 : 20, ...(expanded ? { pixelRatio: Math.min(window.devicePixelRatio, 1.5) } : {}) })
+    e.setPerformance({ maxFps: focus ? (isLite() ? 30 : 60) : 20, ...(expanded && !isLite() ? { pixelRatio: Math.min(window.devicePixelRatio, 1.5) } : {}) })
     if (!expanded) e.setPerformance({ pixelRatio: 1 })
     e.keysEnabled = focus
     if (!focus) (e as unknown as { input?: { keys: Set<string> } }).input?.keys.clear()
