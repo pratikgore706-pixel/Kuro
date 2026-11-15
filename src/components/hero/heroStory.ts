@@ -218,7 +218,7 @@ export function mountHeroStory(track: HTMLElement): () => void {
   /** Wheel events closer together than this belong to the same gesture (trackpad momentum, a fast spin). */
   const GESTURE_GAP_MS = 180
   let busyUntil = 0, glide = 0, touchY: number | null = null, queued = 0
-  let lastWheel = 0, gestureUsed = false
+  let lastWheel = 0, gestureUsed = false, gesturePeak = 0
   const span = () => {
     const top = track.getBoundingClientRect().top + window.scrollY
     return { top, len: Math.max(0, track.offsetHeight - hv.offsetHeight) }
@@ -255,15 +255,19 @@ export function mountHeroStory(track: HTMLElement): () => void {
   }
   const onWheel = (e: WheelEvent) => {
     if (e.ctrlKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return
-    const now = performance.now(), fresh = now - lastWheel > GESTURE_GAP_MS
+    const now = performance.now(), fresh = now - lastWheel > GESTURE_GAP_MS, mag = Math.abs(e.deltaY)
     lastWheel = now
-    if (fresh) gestureUsed = false
+    if (fresh) { gestureUsed = false; gesturePeak = 0 }
+    gesturePeak = Math.max(gesturePeak, mag)
     const d = Math.sign(e.deltaY)
     if (!d) return
-    const inStory = performance.now() < busyUntil || nextStop(d) !== undefined
+    const inStory = now < busyUntil || nextStop(d) !== undefined
     if (!inStory) return                                          // outside the story: normal scrolling
     e.preventDefault()
-    if (gestureUsed) return                                       // rest of the same swipe: already stepped
+    if (now < busyUntil) { if (!gestureUsed) { gestureUsed = true; step(d) } return } // fresh scroll mid-glide: queue it
+    // Same gesture, glide finished: keep going while the user is still scrolling at full strength (a held
+    // spin or a moving finger), but ignore the fading tail of a trackpad flick so it cannot skip chapters.
+    if (gestureUsed && mag < 0.6 * gesturePeak) return
     gestureUsed = true
     step(d)
   }
