@@ -5,8 +5,11 @@ import { RoverTelemetry } from '../components/hero/RoverTelemetry'
 import { CHAPTERS, CTA } from '../components/hero/storyScript'
 import { useEffect, useRef } from 'react'
 import { ArrowRight } from 'lucide-react'
-import { Link } from 'react-router-dom'
+import { Link, NavLink } from 'react-router-dom'
 import { Brand } from '../components/Brand'
+import { SiteFooter } from '../components/site/SiteFooter'
+import { SITE_NAV } from '../components/site/nav'
+import '../styles/site.css'
 import { SITES } from '../data/sites'
 
 const SITE = SITES[0] // IM-2 Athena, Mons Mouton
@@ -47,11 +50,7 @@ export function Landing() {
             <span className="hv-brand-sub">Lunar South Pole Navigator</span>
           </Link>
           <nav aria-label="Primary">
-            <Link to="/mission">Mission</Link>
-            <Link to="/explorer">Explorer</Link>
-            <a href="#technology">Technology</a>
-            <Link to="/methods">Data</Link>
-            <a href="#about">About</a>
+            {SITE_NAV.map((n) => <NavLink key={n.to} to={n.to} end={n.to === '/'}>{n.label}</NavLink>)}
           </nav>
         </header>
 
@@ -120,10 +119,7 @@ export function Landing() {
       </section>
       </div>
 
-      <footer className="lfoot" id="about">
-        <Brand size={18} />
-        <p>Built for the NASA Space Apps Challenge 2026. Not affiliated with or endorsed by NASA. Ephemeris: JPL DE421. Imagery: NASA Moon Trek / LROC.</p>
-      </footer>
+      <SiteFooter />
     </div>
   )
 }

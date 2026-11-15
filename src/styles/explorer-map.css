@@ -1,0 +1,75 @@
+/* Moon map inside the Explorer (Map view). Sits on the 3D stage; its controls live in the open space between the
+   Explorer's panels, using the same layout variables (--colL, --colR, --dock, --gap, --top). */
+.mm { position: absolute; inset: 0; z-index: 1; background: #030507; font-family: var(--sans, 'Inter Variable', Inter, sans-serif); color: var(--text, #f2efe6); }
+.mm-canvas { display: block; width: 100%; height: 100%; cursor: grab; touch-action: none; outline: none; }
+.mm-canvas:active { cursor: grabbing; }
+.mm .mono { font-family: var(--mono, 'IBM Plex Mono', monospace); }
+.mm .dim { color: var(--text-3, #858b91); }
+
+.mm-panel, .mm-zoom, .mm-foot, .mm-card { position: absolute; z-index: 3; }
+.mm-panel { left: calc(var(--colL) + var(--gap) * 2); top: calc(var(--top) + 96px); width: 300px; display: flex; flex-direction: column; gap: 8px; }
+.mm-search { position: relative; display: flex; align-items: center; gap: 8px; height: 38px; padding: 0 10px 0 12px; border: 1px solid rgba(216, 213, 204, 0.18); border-radius: 3px; background: rgba(6, 8, 11, 0.9); color: var(--text-3, #858b91); }
+.mm-search:focus-within { border-color: var(--brass, #b5a18a); }
+.mm-search input { flex: 1; min-width: 0; height: 100%; border: 0; background: none; color: var(--text, #f2efe6); font: 400 13px var(--sans, Inter, sans-serif); outline: none; }
+.mm-search input::placeholder { color: var(--text-3, #858b91); }
+.mm-x { display: grid; place-items: center; width: 24px; height: 24px; border: 0; background: none; color: var(--text-3, #858b91); cursor: pointer; }
+.mm-x:hover { color: var(--text, #f2efe6); }
+.mm-results { position: absolute; left: -1px; right: -1px; top: calc(100% + 4px); margin: 0; padding: 4px; list-style: none; border: 1px solid rgba(216, 213, 204, 0.18); border-radius: 3px; background: #07090b; box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55); z-index: 5; }
+.mm-results button { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; width: 100%; padding: 8px 9px; border: 0; border-radius: 2px; background: none; color: inherit; text-align: left; cursor: pointer; }
+.mm-results button:hover, .mm-results button:focus-visible { background: rgba(242, 239, 230, 0.06); outline: none; }
+.mm-results b { font: 500 13.5px/1.2 var(--head, 'Space Grotesk Variable', sans-serif); }
+.mm-results span { font-size: 11px; color: var(--text-3, #858b91); }
+.mm-results span.mono { grid-column: 2; grid-row: 1; font-size: 10.5px; align-self: center; }
+
+.mm-seg { display: flex; border: 1px solid rgba(216, 213, 204, 0.18); border-radius: 3px; background: rgba(6, 8, 11, 0.9); overflow: hidden; }
+.mm-seg button { flex: 1; height: 30px; border: 0; border-right: 1px solid rgba(216, 213, 204, 0.1); background: none; color: var(--text-2, #b3afa5); font: 500 10px/1 var(--mono, monospace); letter-spacing: 0.1em; text-transform: uppercase; cursor: pointer; }
+.mm-seg button:last-child { border-right: 0; }
+.mm-seg button.on { background: var(--ivory, #ece8dd); color: var(--ivory-ink, #07090b); }
+.mm-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.mm-chips button { height: 26px; padding: 0 9px; border: 1px solid rgba(216, 213, 204, 0.16); border-radius: 2px; background: rgba(6, 8, 11, 0.86); color: var(--text-3, #858b91); font: 500 11px/1 var(--sans, Inter, sans-serif); cursor: pointer; }
+.mm-chips button.on { color: var(--text, #f2efe6); border-color: rgba(181, 161, 138, 0.6); }
+.mm-legend { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 8px 10px; border: 1px solid rgba(216, 213, 204, 0.14); border-radius: 3px; background: rgba(6, 8, 11, 0.88); font-size: 10px; color: var(--text-2, #b3afa5); }
+.mm-legend span:last-child { text-align: right; }
+.mm-ramp { grid-column: 1 / -1; height: 8px; border-radius: 1px; }
+.mm-ramp.elevation { background: linear-gradient(90deg, rgb(38,22,84), rgb(66,58,158) 18%, rgb(44,122,178) 36%, rgb(58,168,148) 52%, rgb(150,192,104) 66%, rgb(226,190,98) 80%, rgb(236,150,92) 92%, rgb(246,236,222)); }
+.mm-ramp.slope { background: linear-gradient(90deg, rgb(34,84,66), rgb(92,150,70) 14%, rgb(214,200,76) 29%, rgb(232,140,52) 43%, rgb(200,62,44) 71%, rgb(120,24,30)); }
+
+.mm-zoom { right: calc(var(--colR) + var(--gap) * 2 + 52px); bottom: calc(var(--dock) + var(--gap) * 2 + 40px); display: flex; flex-direction: column; border: 1px solid rgba(216, 213, 204, 0.18); border-radius: 3px; background: rgba(6, 8, 11, 0.9); overflow: hidden; }
+.mm-zoom button { display: grid; place-items: center; width: 34px; height: 34px; border: 0; border-bottom: 1px solid rgba(216, 213, 204, 0.1); background: none; color: var(--text-2, #b3afa5); cursor: pointer; }
+.mm-zoom button:last-child { border-bottom: 0; }
+.mm-zoom button:hover { color: var(--text, #f2efe6); background: rgba(242, 239, 230, 0.05); }
+
+.mm-foot { left: calc(var(--colL) + var(--gap) * 2); right: calc(var(--colR) + var(--gap) * 2 + 52px); bottom: calc(var(--dock) + var(--gap) * 2); display: grid; grid-template-columns: 1fr auto; align-items: end; gap: 4px 16px; pointer-events: none; }
+.mm-foot > * { pointer-events: auto; }
+.mm-read { display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 7px 10px; border: 1px solid rgba(216, 213, 204, 0.14); border-radius: 3px; background: rgba(6, 8, 11, 0.86); font-size: 11px; color: var(--text, #f2efe6); width: fit-content; max-width: 100%; }
+.mm-read .near { color: #d8c3a5; }
+.mm-scale { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; font-size: 10px; color: var(--text-2, #b3afa5); }
+.mm-scale i { display: block; height: 5px; border: 1px solid rgba(236, 232, 221, 0.8); border-top: 0; min-width: 10px; }
+.mm-credit { grid-column: 1 / -1; margin: 0; font-size: 10px; color: var(--text-3, #858b91); }
+.mm-credit a { color: var(--text-2, #b3afa5); }
+
+.mm-card { right: calc(var(--colR) + var(--gap) * 2 + 52px); top: calc(var(--top) + 96px); width: 300px; padding: 16px 16px 14px; border: 1px solid rgba(181, 161, 138, 0.5); border-radius: 3px; background: rgba(6, 8, 11, 0.95); box-shadow: 0 18px 50px rgba(0, 0, 0, 0.55); animation: mm-in 0.2s ease-out; }
+@keyframes mm-in { from { opacity: 0; transform: translateY(6px); } }
+.mm-card .mm-x { position: absolute; top: 8px; right: 8px; }
+.mm-kicker { margin: 0; font: 500 9.5px/1.2 var(--mono, monospace); letter-spacing: 0.14em; text-transform: uppercase; color: var(--brass, #b5a18a); }
+.mm-card h3 { margin: 6px 24px 10px 0; font: 500 22px/1.1 var(--head, 'Space Grotesk Variable', sans-serif); letter-spacing: -0.01em; }
+.mm-card dl { margin: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 10px 12px; }
+.mm-card dl .wide { grid-column: 1 / -1; }
+.mm-card dt { font: 500 9.5px/1.2 var(--mono, monospace); letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-3, #858b91); }
+.mm-card dd { margin: 3px 0 0; font-size: 12.5px; line-height: 1.45; color: var(--text, #f2efe6); }
+.mm-card dd.mono { font-size: 12px; }
+.mm-actions { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 14px; }
+.mm-actions button, .mm-actions a { display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 9px; border: 1px solid rgba(216, 213, 204, 0.18); border-radius: 2px; background: none; color: var(--text, #f2efe6); font: 500 10px/1 var(--mono, monospace); letter-spacing: 0.06em; text-transform: uppercase; text-decoration: none; cursor: pointer; }
+.mm-actions button:hover, .mm-actions a:hover { border-color: var(--brass, #b5a18a); }
+.mm-hint { margin: 12px 0 0; font-size: 12px; color: var(--text-2, #b3afa5); line-height: 1.5; }
+
+/* in Map view the 3D-only overlays step aside */
+.xp.mode-map .xp-hud, .xp.mode-map .xp-scale, .xp.mode-map .xp-toolbar [aria-label^='Measure'] { display: none; }
+
+@media (max-width: 860px) {
+  .mm-panel { left: 8px; right: 8px; top: 108px; width: auto; }
+  .mm-chips { display: none; }
+  .mm-card { left: 8px; right: 8px; top: auto; bottom: 160px; width: auto; }
+  .mm-foot { left: 8px; right: 8px; bottom: 150px; }
+  .mm-zoom { right: 8px; bottom: 210px; }
+}

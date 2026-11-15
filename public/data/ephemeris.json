@@ -1,0 +1,20 @@
+{
+ "format": "float32 little-endian, 6 values per sample: sunX,sunY,sunZ (AU), earthX,earthY,earthZ (km)",
+ "origin": "Moon centre",
+ "frame": "MOON_ME (DE421 mean Earth / polar axis)",
+ "ephemeris": "JPL DE421 (PyPI de421 2008.1) incl. DE421 lunar librations",
+ "timeScale": "TT (treated as TDB; difference < 2 ms)",
+ "jdStart": 2439126.5,
+ "stepDays": 0.5,
+ "count": 61363,
+ "corrections": {
+  "sunLightTime": true,
+  "stellarAberration": false,
+  "earthLightTime": false
+ },
+ "interpolation": "Catmull-Rom cubic between samples; never extrapolate",
+ "references": [
+  "Folkner, Williams & Boggs (2009) JPL IPN PR 42-178 (DE421)",
+  "Williams, Boggs & Folkner (2008) DE421 Lunar Orbit, Physical Librations, and Surface Coordinates"
+ ]
+}

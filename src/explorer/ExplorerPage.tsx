@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Camera, CarFront, ChevronLeft, ChevronRight, Compass, Crosshair, Globe2, Keyboard, Layers, Link2, Map as MapIcon, MapPin, Maximize2, Minimize2, Moon, Mountain, Plane, RotateCcw, Ruler, Sun, X } from 'lucide-react'
+import { Camera, CarFront, ChevronLeft, ChevronRight, Compass, Crosshair, Globe2, Keyboard, Layers, Link2, Map as MapIcon, MapPin, Maximize2, Minimize2, Moon, Mountain, Plane, RotateCcw, Ruler, Scan, Sun, X } from 'lucide-react'
 import { useSearchParams } from 'react-router-dom'
 import { Astronaut, Satellite } from '../components/Art'
 import { LandingPicker } from '../components/LandingPicker'
@@ -13,6 +13,7 @@ import { DAY } from '../engine/time'
 import { computeSky, newSky } from '../engine/sky'
 import { useEarthMargin, useEvents, useFrame, useHorizon, useSeries, useSkyAt } from '../hooks'
 import { useSite, useStore } from '../store'
+import { MoonMap, type MapApi } from './map/MoonMap'
 import { ExplorerEngine, type EngineStatus, type HoverInfo, type Lighting, type MapKind, type MeasureResult, type ViewMode } from './engine/ExplorerEngine'
 import type { LayerId } from './engine/glsl'
 import { LAYERS, gradient, isTerrainView } from './legend'
@@ -20,6 +21,7 @@ import { Controls, RoverHud } from './Controls'
 import type { RoverTelemetry } from './engine/Rover'
 import { HoverHud, MeasurePanel, ScaleBar, Tour, type TourStep } from './Overlays'
 import { signal } from './signal'
+import '../styles/explorer-theme.css'
 
 type ViewDef = { id: ViewMode; label: string; hint: string; icon: typeof Globe2 }
 /** Views ordered by scale, in three groups: the whole Moon, the polar terrain, and on the ground. Keys 1–5 select them. */
@@ -48,6 +50,7 @@ export function ExplorerPage() {
   const root = useRef<HTMLElement>(null)
   const host = useRef<HTMLDivElement>(null)
   const engine = useRef<ExplorerEngine | null>(null)
+  const mapApi = useRef<MapApi | null>(null)
   const site = useSite()
   const { landingMs, days, cursorMs, custom, moon } = useStore()
   const { selectSite, addCustom, setLanding, setDays, setCursor } = useStore()
@@ -62,7 +65,8 @@ export function ExplorerPage() {
   const [opts, setOpts] = useLocal('kuro.opts5', { grid: false, labels: false, contours: false, autoRotate: false, fill: true, paths: true, orbiter: true, micro: true })
   // Layers starts minimised so the ranking panel gets the room — date selection and ranking are what
   // this page is for; the layer picker is still one click away at the bottom of the left column.
-  const [panels, setPanels] = useLocal('kuro.panels3', { sites: false, info: true, layers: false, sky: false })
+  const [panels, setPanels] = useLocal<{ sites: boolean; info: boolean; layers: boolean; sky: boolean; plan?: boolean }>('kuro.panels3', { sites: false, info: true, layers: false, sky: false, plan: true })
+  const planOpen = panels.plan !== false
   const [status, setStatus] = useState<EngineStatus | null>(null)
   const [help, setHelp] = useState(false)
   const [webgl, setWebgl] = useState(true)
@@ -71,6 +75,8 @@ export function ExplorerPage() {
   const [tour, setTour] = useState<number | null>(null)
   const [toast, setToast] = useState<string | null>(null)
   const [full, setFull] = useState(false)
+  // focus: hide every panel so the Moon gets the whole screen (H)
+  const [focus, setFocus] = useState(false)
   const [, force] = useState(0)
   // fast-changing values go through signals so the page (and its charts) does not re-render on every pointer move
   const hoverSig = useMemo(() => signal<HoverInfo | null>(null), [])
@@ -129,7 +135,8 @@ export function ExplorerPage() {
   useEffect(() => { if (moon) engine.current?.setData(moon) }, [moon])
   useEffect(() => { engine.current?.setSites(marks, site.id) }, [marks, site.id])
   useEffect(() => { engine.current?.setMapKind(mapKind) }, [mapKind])
-  useEffect(() => { engine.current?.setMode(mode) }, [mode])
+  // the Map view is a 2D map (MoonMap); the 3D engine stays on the globe and stops drawing underneath it
+  useEffect(() => { engine.current?.setMode(mode === 'map' ? 'globe' : mode); engine.current?.setPaused(mode === 'map') }, [mode])
   useEffect(() => { engine.current?.setLayer(effLayer) }, [effLayer])
   useEffect(() => { engine.current?.setExaggeration(exag.globe, exag.terrain) }, [exag])
   useEffect(() => { engine.current?.setOptions(opts) }, [opts])
@@ -151,6 +158,7 @@ export function ExplorerPage() {
       const i = Number(ev.key) - 1
       if (i >= 0 && i < VIEWS.length) setMode(VIEWS[i].id)
       if (ev.key === '?') setHelp((h) => !h)
+      if (ev.key === 'h' || ev.key === 'H') setFocus((f) => !f)
       // P plays or pauses everywhere; Space too, except in the views where it flies or brakes
       if (!ev.repeat && (ev.key === 'p' || ev.key === 'P' || (ev.key === ' ' && (mode === 'globe' || mode === 'map' || mode === 'pole')))) {
         const st = useStore.getState(); st.setPlaying(!st.playing)
@@ -195,8 +203,9 @@ export function ExplorerPage() {
   ] as const).filter((t) => t[2])
 
   return (
-    <main ref={root} className={`xp mode-${mode}${panels.info ? '' : ' info-closed'}${panels.sky ? ' sky-open' : ''}`}>
+    <main ref={root} className={`xp mode-${mode}${panels.info ? '' : ' info-closed'}${panels.sky ? ' sky-open' : ''}${planOpen ? '' : ' plan-closed'}${focus ? ' focus' : ''}`}>
       <div ref={host} className="xp-stage" />
+      {mode === 'map' && <MoonMap kind={mapKind} onKind={setMapKind} moon={moon} sites={marks} selectedId={site.id} onSelect={selectSite} onAddSite={(lat, lon, name) => addCustom(lat, lon, name)} apiRef={mapApi} />}
       {!webgl && <div className="xp-block"><Astronaut size={140} /><h2>3D needs WebGL</h2><p>This device could not start WebGL. The sky chart, site conditions and comparison still work.</p></div>}
       {status?.blocked && (
         <div className="xp-block" role="status">
@@ -234,18 +243,25 @@ export function ExplorerPage() {
         <button className={'xp-tool' + (measuring || measure ? ' on' : '')} onClick={() => e?.setMeasuring(!measuring)} aria-pressed={measuring} aria-label="Measure distance and elevation profile" data-tip="Measure distance and height (M)"><Ruler size={16} strokeWidth={1.8} /></button>
         <button className={'xp-tool' + (tour !== null ? ' on' : '')} onClick={() => { if (tour === null) { e?.setMeasuring(false); e?.clearMeasure() } setTour(tour === null ? 0 : null) }} aria-pressed={tour !== null} aria-label="Guided tour" data-tip="Guided tour"><Compass size={16} strokeWidth={1.8} /></button>
         <i className="xp-tool-sep" aria-hidden="true" />
-        <button className="xp-tool" onClick={() => e?.focusSelected()} aria-label="Go to the selected site" data-tip="Go to the selected site (F)"><Crosshair size={16} strokeWidth={1.8} /></button>
-        <button className="xp-tool" onClick={() => e?.resetView()} aria-label="Reset view" data-tip="Reset view (R)"><RotateCcw size={16} strokeWidth={1.8} /></button>
+        <button className="xp-tool" onClick={() => (mode === 'map' ? mapApi.current?.focusSite(site.id) : e?.focusSelected())} aria-label="Go to the selected site" data-tip="Go to the selected site (F)"><Crosshair size={16} strokeWidth={1.8} /></button>
+        <button className="xp-tool" onClick={() => (mode === 'map' ? mapApi.current?.reset() : e?.resetView())} aria-label="Reset view" data-tip="Reset view (R)"><RotateCcw size={16} strokeWidth={1.8} /></button>
         <i className="xp-tool-sep" aria-hidden="true" />
         <button className="xp-tool" onClick={shot} aria-label="Save a picture of this view" data-tip="Save a picture"><Camera size={16} strokeWidth={1.8} /></button>
         <button className="xp-tool" onClick={share} aria-label="Copy a link to this view" data-tip="Copy a link to this exact view"><Link2 size={16} strokeWidth={1.8} /></button>
         <button className="xp-tool" onClick={fullscreen} aria-label={full ? 'Exit full screen' : 'Full screen'} data-tip={full ? 'Exit full screen' : 'Full screen'}>{full ? <Minimize2 size={16} strokeWidth={1.8} /> : <Maximize2 size={16} strokeWidth={1.8} />}</button>
+        <button className={'xp-tool' + (focus ? ' on' : '')} onClick={() => setFocus(!focus)} aria-pressed={focus} aria-label={focus ? 'Show the panels' : 'Hide the panels'} data-tip={focus ? 'Show the panels (H)' : 'Focus: hide the panels (H)'}><Scan size={16} strokeWidth={1.8} /></button>
         <button className={'xp-tool' + (help ? ' on' : '')} onClick={() => setHelp(!help)} aria-label="Show keyboard and mouse controls" aria-expanded={help} data-tip="Controls (?)"><Keyboard size={16} strokeWidth={1.8} /></button>
       </div>
 
       {/* left column: when, then where */}
+      {!planOpen && (
+        <button data-occlude className="xp-edge left" onClick={() => setPanels({ ...panels, plan: true })} aria-label="Show landing date and site ranking">
+          <span>Landing &amp; sites</span><ChevronRight size={15} aria-hidden="true" />
+        </button>
+      )}
       <div className="xp-colL">
         <div className="xp-plan glass" data-occlude>
+          <button className="xp-plan-hide" onClick={() => setPanels({ ...panels, plan: false, sites: false, layers: false })} aria-label="Hide landing date and site ranking" title="Hide"><ChevronLeft size={15} /></button>
           <LandingPicker />
           <RankingPanel />
           <footer className="xp-planfoot">
@@ -340,6 +356,7 @@ export function ExplorerPage() {
               <div><dt>Double-click</dt><dd>Add a site there</dd></div>
               <div><dt>P</dt><dd>Play or pause the stay</dd></div>
               <div><dt>Space</dt><dd>Play or pause (Globe, Map, Pole)</dd></div>
+              <div><dt>H</dt><dd>Hide or show the panels</dd></div>
               <div><dt>?</dt><dd>This panel</dd></div>
             </dl>
             <dl>

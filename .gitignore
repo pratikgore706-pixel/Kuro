@@ -1,7 +1,10 @@
 node_modules
 dist
-data/
+/data/
 *.tif
 *.TIF
 __pycache__
 public/moon/
+*.bundle
+.tmp-preview/
+tsconfig.tsbuildinfo

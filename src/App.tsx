@@ -3,7 +3,9 @@ import { HashRouter, MemoryRouter, Outlet, Route, Routes } from 'react-router-do
 import { TopBar } from './components/TopBar'
 import { loadEphemeris } from './engine/ephemeris'
 import { loadMoonData } from './explorer/moonData'
-import { Compare } from './pages/Compare'
+import { About } from './pages/About'
+import { CompareSites } from './pages/CompareSites'
+import { Data } from './pages/Data'
 import { ExplorerPage } from './explorer/ExplorerPage'
 import { Landing } from './pages/Landing'
 import { Methods } from './pages/Methods'
@@ -31,10 +33,12 @@ export default function App() {
     <Router>
       <Routes>
         <Route path="/" element={<Landing />} />
+        <Route path="/data" element={<Data />} />
+        <Route path="/about" element={<About />} />
         <Route element={<Workspace />}>
           <Route path="/explorer" element={<ExplorerPage />} />
           <Route path="/mission" element={<Mission />} />
-          <Route path="/compare" element={<Compare />} />
+          <Route path="/compare" element={<CompareSites />} />
           <Route path="/reports" element={<Reports />} />
           <Route path="/methods" element={<Methods />} />
         </Route>
