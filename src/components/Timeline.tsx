@@ -23,7 +23,11 @@ const BAND = 11, Y1 = 2, Y2 = Y1 + BAND + 4, TOP = Y2 + BAND + 8
 
 function elevRange(series: Series) {
   let lo = 0, hi = 0
-  for (let i = 0; i < series.n; i++) { lo = Math.min(lo, series.sunEl[i], series.earthEl[i]); hi = Math.max(hi, series.sunEl[i], series.earthEl[i]) }
+  for (let i = 0; i < series.n; i++) {
+    const a = series.sunEl[i], b = series.earthEl[i]
+    if (isFinite(a)) { lo = Math.min(lo, a); hi = Math.max(hi, a) }
+    if (isFinite(b)) { lo = Math.min(lo, b); hi = Math.max(hi, b) }
+  }
   const pad = Math.max(1, (hi - lo) * 0.08)
   return { lo: lo - pad, hi: Math.min(90, hi + pad) }
 }

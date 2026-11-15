@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Summary } from '../engine/sky'
 import { fmtOffset } from '../data/sites'
-import { fmtTimeOfDay, parseTimeOfDay } from '../engine/time'
+import { DAY, fmtTimeOfDay, parseTimeOfDay } from '../engine/time'
 import { useStore } from '../store'
 import { RANKING_WEIGHTS, scoreStay } from './api'
 import { summarizeStatuses, type Status } from './backendScore'
@@ -86,5 +86,20 @@ describe('playback', () => {
     useStore.getState().tick(1000)
     expect(useStore.getState().cursorMs).toBe(Date.UTC(2026, 11, 1)); expect(useStore.getState().playing).toBe(true)
     s.setLoop(false); s.setPlaying(false)
+  })
+})
+
+describe('stay length near the end of the data table', () => {
+  it('a longer stay moves the landing earlier so the whole stay stays inside the table', () => {
+    const s = useStore.getState()
+    const end = Date.UTC(2050, 0, 1)
+    s.setReady([Date.UTC(1966, 0, 1), end])
+    s.setDays(30); s.setLanding(end - 30 * DAY)
+    expect(useStore.getState().landingMs + 30 * DAY).toBeLessThanOrEqual(end)
+    s.setDays(120)
+    const st = useStore.getState()
+    expect(st.landingMs + 120 * DAY).toBeLessThanOrEqual(end)
+    expect(st.cursorMs).toBeGreaterThanOrEqual(st.landingMs); expect(st.cursorMs).toBeLessThanOrEqual(st.landingMs + 120 * DAY)
+    s.setDays(14)
   })
 })

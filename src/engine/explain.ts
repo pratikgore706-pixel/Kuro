@@ -96,3 +96,53 @@ export function dateWords(ds: DateSensitivity, nowSun: number, nowEarth: number,
   if (peakSunEl < 10) out.push(`Why: here the Sun never climbs more than ${Math.max(0, peakSunEl).toFixed(1)}° above level ground${maxHillDeg !== null && maxHillDeg > 0.3 ? `, while the surrounding hills rise up to ${maxHillDeg.toFixed(1)}°` : ''}. It circles the horizon once a month, so shifting the start by a few days changes which part of that circle falls behind the hills.`)
   return out
 }
+
+/** One plain-language reason, with what kind of reason it is (drawn with a matching icon). */
+export interface StoryLine { kind: 'sun' | 'earth' | 'ground' | 'dark' | 'both' | 'warn'; good: boolean; text: string }
+
+const pct = (v: number) => `${Math.round(v)}%`
+const hoursOrDays = (h: number) => (h < 48 ? `${Math.round(h)} hour${Math.round(h) === 1 ? '' : 's'}` : `${(h / 24).toFixed(1)} days`)
+
+/**
+ * The story of one ranked site, for someone who has never planned a landing: a headline and a few short reasons,
+ * each tied to one number the stay actually has. `next` is the site ranked just below (or above, for the last).
+ */
+export function siteStory(r: { site: { name: string }; summary: Summary; slopeDeg: number | null; score: number | null; blockers: string[] }, rank: number, total: number, days: number, next?: { site: { name: string }; score: number | null }): { headline: string; lines: StoryLine[] } {
+  const m = r.summary, lines: StoryLine[] = []
+  const sun = m.sunAnyPct, earth = m.earthPct
+  // power
+  if (sun === 0) lines.push({ kind: 'sun', good: false, text: `The Sun never reaches this spot during these ${days} days, so solar panels could not charge at all.` })
+  else if (sun >= 80) lines.push({ kind: 'sun', good: true, text: `Sunlight ${pct(sun)} of the time: solar panels can charge almost the whole stay.` })
+  else if (sun >= 50) lines.push({ kind: 'sun', good: true, text: `Sunlight ${pct(sun)} of the time: more than half the stay, enough to keep batteries topped up.` })
+  else lines.push({ kind: 'sun', good: false, text: `Sunlight only ${pct(sun)} of the time: the lander would run on batteries for most of the stay.` })
+  // radio
+  if (earth === 0) lines.push({ kind: 'earth', good: false, text: 'Earth never rises above the hills here, so the lander could not talk home without a relay satellite.' })
+  else if (earth >= 95) lines.push({ kind: 'earth', good: true, text: `Earth is in view ${pct(earth)} of the time: the lander can call home whenever it needs to.` })
+  else if (earth >= 50) lines.push({ kind: 'earth', good: true, text: `Earth is in view ${pct(earth)} of the time: there are regular windows to send data home.` })
+  else lines.push({ kind: 'earth', good: false, text: `Earth is in view only ${pct(earth)} of the time: long silences between contacts.` })
+  // ground
+  if (r.slopeDeg !== null) {
+    const s = r.slopeDeg
+    if (s < 5) lines.push({ kind: 'ground', good: true, text: `The ground slopes just ${s.toFixed(1)}°: gentle enough for a safe touchdown.` })
+    else if (s < 10) lines.push({ kind: 'ground', good: true, text: `The ground slopes ${s.toFixed(1)}°: landable, but the legs must handle a tilt.` })
+    else lines.push({ kind: 'ground', good: false, text: `The ground slopes ${s.toFixed(1)}°: steep, with a real risk of tipping over on landing.` })
+  }
+  // the night to survive
+  if (sun > 0) {
+    const d = m.longestDarkH
+    if (d <= 0) lines.push({ kind: 'dark', good: true, text: 'It never goes dark during the stay, so there is no cold night to survive.' })
+    else if (d < 24) lines.push({ kind: 'dark', good: true, text: `The longest dark spell is ${hoursOrDays(d)}: batteries only need to bridge a short gap.` })
+    else if (d < 96) lines.push({ kind: 'dark', good: false, text: `The longest dark spell is ${hoursOrDays(d)}: the lander must keep warm on batteries through it.` })
+    else lines.push({ kind: 'dark', good: false, text: `The longest dark spell is ${hoursOrDays(d)}, near −170 °C: very hard to survive without nuclear heaters.` })
+  }
+  // power and radio together
+  if (sun > 0 && earth > 0) lines.push({ kind: 'both', good: m.bothPct >= 50, text: `Power and a radio link at the same time ${pct(m.bothPct)} of the stay${m.bothPct >= 50 ? ': the easiest hours to work in.' : '.'}` })
+
+  let headline: string
+  if (r.blockers.length) headline = `Ruled out for this date: ${r.blockers.join(' and ')}.`
+  else if (rank === 0) {
+    const gap = next && next.score !== null && r.score !== null ? Math.round(r.score - next.score) : null
+    headline = `The best of all ${total} sites for this landing${gap !== null && gap > 0 ? `, ${gap} point${gap === 1 ? '' : 's'} ahead of ${next!.site.name}` : gap === 0 ? `, level with ${next!.site.name}` : ''}.`
+  } else headline = `Number ${rank + 1} of ${total} for this landing.`
+  return { headline, lines }
+}

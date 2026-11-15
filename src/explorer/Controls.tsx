@@ -3,7 +3,6 @@ import { ArrowDown, ArrowUp, Camera, Crosshair, Flag, Gamepad2, Lightbulb, Navig
 import type { ExplorerEngine, ViewMode } from './engine/ExplorerEngine'
 import { ROVER_SPEEDS, type RoverSpeed, type RoverTelemetry } from './engine/Rover'
 import { SITES, fmtLat, fmtLon } from '../data/sites'
-import { useStore } from '../store'
 import { useSignal, type Signal } from './signal'
 
 /** Virtual joystick: drag the knob; releases to centre. Writes x/y (−1…1) to the engine. */
@@ -80,10 +79,9 @@ const fmtEta = (s: number) => (s < 90 ? `${s.toFixed(0)} s` : s < 5400 ? `${(s /
 
 /** Destination mode: search known places or type coordinates, or click the ground; the rover drives itself there. */
 function GoTo({ engine, t }: { engine: ExplorerEngine; t: RoverTelemetry }) {
-  const custom = useStore((s) => s.custom)
   const [q, setQ] = useState('')
   const [err, setErr] = useState<string | null>(null)
-  const places = [...SITES, ...custom]
+  const places = SITES
   const coord = parseLatLon(q)
   const hits = q.trim() && !coord ? places.filter((p) => p.name.toLowerCase().includes(q.trim().toLowerCase())).slice(0, 6) : []
   const go = (lat: number, lon: number, name: string) => { engine.roverGoto(lat, lon, name); setQ(''); setErr(null) }

@@ -17,7 +17,7 @@ interface Result { key: string; cells: Cell[] }
 type Metric = 'sun' | 'earth'
 
 
-const BASE = [18, 25, 50], SUN = [242, 196, 109], EARTH = [140, 200, 255]
+const BASE = [20, 23, 27], SUN = [220, 179, 107], EARTH = [143, 178, 217]
 function cellColour(v: number, metric: Metric): string {
   const t = Math.max(0, Math.min(1, v / 100)), c = metric === 'sun' ? SUN : EARTH
   return `rgb(${BASE.map((b, i) => Math.round(b + (c[i] - b) * t)).join(',')})`
@@ -32,7 +32,6 @@ export function NearbyMap({ site }: { site: Site }) {
   const landingMs = useStore((s) => s.landingMs)
   const days = useStore((s) => s.days)
   const moon = useStore((s) => s.moon)
-  const addCustom = useStore((s) => s.addCustom)
   const margin = useEarthMargin()
   const [spacing, setSpacing] = useState(500)
   const [metric, setMetric] = useState<Metric>('sun')
@@ -117,11 +116,10 @@ export function NearbyMap({ site }: { site: Site }) {
             <div className="nb-grid" style={{ gridTemplateColumns: `repeat(${N}, 1fr)` }}>
               {cells.map((c) => {
                 const here = c === centre
-                const label = `${fmtOffset(c.e, c.n)}: ${noun} ${c[metric].toFixed(0)}%${here ? ' (selected site)' : ' — click to add this spot as a site'}`
+                const label = `${fmtOffset(c.e, c.n)}: ${noun} ${c[metric].toFixed(0)}%${here ? ' (the candidate site)' : ''}`
                 return (
-                  <button key={`${c.e},${c.n}`} className={'nb-cell' + (here ? ' here' : '') + (c === best && !here ? ' best' : '')} style={{ background: cellColour(c[metric], metric) }}
-                    title={label} aria-label={label} disabled={here}
-                    onClick={() => addCustom(c.lat, c.lon, `${fmtOffset(c.e, c.n)} of ${site.name}`)} />
+                  <span key={`${c.e},${c.n}`} role="img" className={'nb-cell' + (here ? ' here' : '') + (c === best && !here ? ' best' : '')} style={{ background: cellColour(c[metric], metric) }}
+                    title={label} aria-label={label} />
                 )
               })}
             </div>
@@ -129,7 +127,7 @@ export function NearbyMap({ site }: { site: Site }) {
           <div className="nb-scale mono dim"><span>{reach} W</span><span>each square {fmtDist(spacing)}</span><span>{reach} E</span></div>
           <p className="nb-say">
             Within {reach}, {noun} ranges from <b>{lo.toFixed(0)}%</b> to <b>{hi.toFixed(0)}%</b> (here: {centre[metric].toFixed(0)}%).
-            {Math.round(best[metric]) > Math.round(centre[metric]) ? <> Best spot: <b>{fmtOffset(best.e, best.n)}</b> ({best[metric].toFixed(0)}%) — click it to use it.</> : hi - lo < 2 ? ' This spot is about as good as its surroundings.' : ' This spot is already the best on the grid.'}
+            {Math.round(best[metric]) > Math.round(centre[metric]) ? <> Best spot nearby: <b>{fmtOffset(best.e, best.n)}</b> ({best[metric].toFixed(0)}%) — a few hundred metres can matter this much at the pole.</> : hi - lo < 2 ? ' This spot is about as good as its surroundings.' : ' This spot is already the best on the grid.'}
           </p>
         </>
       )}

@@ -95,19 +95,19 @@ function SlipChart({ rows, stay, metric }: { rows: Row[]; stay: number; metric: 
 }
 
 export function Compare() {
-  const { scenarios, custom, range, moon, earthMarginDeg } = useStore()
+  const { scenarios, range, moon, earthMarginDeg } = useStore()
   const { addScenario, updateScenario, removeScenario, setEarthMargin } = useStore()
   const [stay, setStay] = useState(14)
-  const all = useMemo(() => [...SITES, ...custom], [custom])
+  const all = SITES
 
   const rows: Row[] = useMemo(() => scenarios.map((sc, i) => {
-    const site = findSite(sc.siteId, custom)
+    const site = findSite(sc.siteId)
     const n = Math.min(960, Math.round(sc.days * 96))
     const horizon = horizonFor(site, moon)
     const series = computeSeries(makeFrame(site.lat, site.lon), horizon, sc.landingMs, (sc.days * DAY) / (n - 1), n, earthMarginDeg)
     const m = summarize(series)
     return { sc, site, series, m, letter: LETTERS[i], score: scoreStay(m, slopeAt(site)), horizon }
-  }), [scenarios, custom, moon, earthMarginDeg])
+  }), [scenarios, moon, earthMarginDeg])
   const side: SideRow[] = useMemo(() => rows.map((r) => ({ key: r.sc.id, letter: r.letter, site: r.site, landingMs: r.sc.landingMs, days: r.sc.days, series: r.series, horizon: r.horizon })), [rows])
 
   const best = (k: (typeof METRICS)[number]) => {

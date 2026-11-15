@@ -62,7 +62,8 @@ export function mountHeroStory(track: HTMLElement): () => void {
     narrow = vw <= 900
     horizonY = ground.offsetTop + ground.offsetHeight * HORIZON
     // low south-pole arc; flatter on phones so it passes under the speech bubble
-    sunPeak = Math.max(40, Math.min(hvH * (narrow ? 0.07 : 0.13), horizonY - 140))
+    // (raised so the ridges never hide it for long: about twice the old height)
+    sunPeak = Math.max(60, Math.min(hvH * (narrow ? 0.13 : 0.26), horizonY - 90))
     rover.measure()
     if (dlg) { bubbleW = dlg.offsetWidth; bubbleH = dlg.offsetHeight }
   }
@@ -87,7 +88,9 @@ export function mountHeroStory(track: HTMLElement): () => void {
     const u = sunAt(p)
     const elev = Math.sin(Math.PI * u)
     const sunXn = 0.86 - 0.7 * u
-    sun.style.transform = `translate3d(${sunXn * vw}px, ${horizonY + 26 - elev * sunPeak}px, 0)`
+    // height on screen climbs faster than the light (power 0.6), so the Sun clears the ridges soon after rising
+    const lift = Math.pow(elev, 0.6)
+    sun.style.transform = `translate3d(${sunXn * vw}px, ${horizonY + 26 - lift * sunPeak}px, 0)`
     sun.style.opacity = u > 0 && u < 1 ? '1' : '0'
     if (sunWarm) sunWarm.style.opacity = String(clamp(1 - elev * 2.2))
     const sunLight = clamp(elev * 1.8)

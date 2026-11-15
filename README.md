@@ -1,36 +1,44 @@
-# KURO — lunar landing site × date explorer
+# KURO · Lunar South Pole landing explorer
 
-NASA Space Apps Challenge 2026. Explore the Moon in 3D, pick a landing site and a date, and see where the Sun
-and Earth sit against the real terrain horizon: how long the light and the direct-to-Earth link last, and what
-changes if the schedule slips.
+NASA Space Apps Challenge 2026, by team **The Selenites**. Choose a landing date, and KURO ranks 78 candidate landing sites near the Moon's
+South Pole by sunlight, Earth contact and terrain. You can explore each site in 3D, drive a rover across real NASA
+terrain, and compare sites side by side.
 
 ## Run it
 
 ```
 npm install
-npm run fetch:moon      # once: downloads NASA LOLA elevation + LRO colour (~215 MB) and prepares public/moon/
 npm run dev             # http://localhost:5173
 ```
 
-`npm run fetch:moon -- --lite` skips the 181 MB South Pole model (globe and flat map only).
-Without the data the app still runs: smooth-sphere horizons, plain globe, and the terrain views explain what is missing.
+The NASA Moon data the site needs (packed elevation grids, colour map, Sun and Earth table) is already in
+`public/`. Needs Node 20.19 or newer. No API keys.
 
 ```
-npm test                # engine and terrain maths (14 tests)
-npm run build           # static site in dist/ — copy public/moon/ alongside when deploying
+npm test                # maths, data and ranking checks
+npm run build           # type-check, then the static site in dist/
+npm run preview         # serve dist/ locally
 ```
 
-Needs Node 20+. No API keys.
+## Deploy
+
+The build is a static site with hash routes (`#/explorer`), so any static host works without rewrite rules.
+
+- **Vercel:** import the repository. `vercel.json` sets the build (`npm run build`, output `dist/`) and long
+  browser caching for the data files. Nothing else to configure.
+- **Netlify, GitHub Pages, Cloudflare Pages:** build command `npm run build`, publish directory `dist`.
+
+The base path is relative, so the site also works from a sub-folder.
 
 ## Pages
 
 | Page | What it does |
 |---|---|
-| Explorer | Full-screen 3D Moon. Views: **Globe**, **South Pole** (600 km of LOLA terrain), **Drone** (low flight over the site), **Surface** (stand there and look around), **Flat map** (whole Moon or the pole from above). Layers: LRO colour, real light, elevation, slope, sunlit now, Earth in view now, sunlight over the stay, Earth over the stay. |
-| Mission | Set power and radio requirements; checks a full stay on every landing date in the window at every chosen site. Pass/fail only, no scores. |
-| Compare | Up to six site–date scenarios side by side, plus how each holds up as the landing date moves. |
-| Reports | Printable summary with JSON and CSV export. |
-| Data & methods | Sources, accuracy checks and limitations. |
+| Home | The story of IM-2 Athena's landing, told by the KURO rover. |
+| Explorer | 3D Moon. Pick a landing date and see the 78 sites ranked; open any site's details, or fly down and drive the rover there. Views: Globe, Pole, Drone, Rover. |
+| Compare | The top sites side by side, each as a live rover view on one shared clock. |
+| Data | Where every number comes from and how it was checked. |
+| About us | The team and the project. |
 
 ## What is computed, from what
 
@@ -38,8 +46,20 @@ Needs Node 20+. No API keys.
   `pipeline/ephemeris/build_ephemeris.py` into `public/data/ephemeris.bin`. Checked against direct DE421, the
   independent `astronomy-engine`, and the Apollo 11 landing Sun angle.
 - **Terrain:** NASA LOLA (SVS CGI Moon Kit global grid; PGDA product 90 South Pole DEM, Barker et al. 2023).
-- **Horizons:** traced per site from LOLA out to 300 km with curvature. In the terrain views the GPU ray-marches
-  the elevation grid toward the Sun and Earth for every cell, so shadows come from the terrain itself.
+- **Horizons:** traced per site from LOLA out to 300 km, with the Moon's curvature. The 78 candidate sites ship
+  pre-traced (`src/data/site-horizons.json`, identical to a live trace); in the 3D views the GPU traces the
+  elevation grid toward the Sun and Earth for every cell, so shadows come from the terrain itself.
+- **Ranking:** the KURO backend's scoring formula, reproduced exactly in the browser (`src/services/backendScore.ts`).
+
+## Updating the Moon data
+
+```
+npm run fetch:moon      # downloads NASA LOLA elevation + LRO colour, then packs it (npm run pack:moon)
+npm run build:horizons  # re-trace the 78 site skylines for the new data
+```
+
+Packing is lossless: each grid is stored as row differences in two byte planes, gzip-compressed, and the
+browser restores the exact original heights (about half the download).
 
 ## Backend
 
@@ -49,13 +69,15 @@ it to point the app at the KURO backend; the request and response shapes are doc
 ## Layout
 
 ```
-src/explorer/        3D explorer: page, legend, Moon data loader, horizon tracing
-src/explorer/engine/ Three.js engine: globe, terrain + GPU visibility, flat map, sky, worker
-src/engine/          time scales, ephemeris interpolation, sky geometry, events, metrics
-src/services/        API layer (local or backend)
-src/pages/           Landing, Mission, Compare, Reports, Methods
-scripts/             fetch-moon-data.mjs (NASA download + conversion)
+src/explorer/        3D explorer page, Moon data loader, horizon tracing
+src/explorer/engine/ Three.js engine: globe, terrain and visibility, sky, rover, terrain worker
+src/engine/          time scales, ephemeris interpolation, sky geometry, events, explanations
+src/services/        API layer and the ranking formula
+src/pages/           Home, Compare, Data, About us (plus Mission, Reports, Methods)
+src/components/      shared interface parts
+scripts/             NASA data download and packing
 pipeline/            offline Python for the ephemeris table
 ```
 
-Not affiliated with or endorsed by NASA. Credit: NASA’s Scientific Visualization Studio, NASA GSFC PGDA, LROC/ASU, NASA/JPL.
+Not affiliated with or endorsed by NASA. Credit: NASA's Scientific Visualization Studio, NASA GSFC PGDA,
+LROC/ASU, NASA/JPL.

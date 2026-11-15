@@ -6,7 +6,7 @@ import { fmtC, kToC } from '../engine/thermal'
 import { DAY, fmtHours, fmtUtc } from '../engine/time'
 import { getEphemeris } from '../engine/ephemeris'
 import { horizonFor } from '../hooks'
-import { dataSourceLabel, RANKING_MAX_LAT, rankSites, scoreStay, slopeAt } from '../services/api'
+import { dataSourceLabel, rankSites, scoreStay, slopeAt } from '../services/api'
 import { findSite, useStore } from '../store'
 
 function save(name: string, type: string, text: string) {
@@ -18,20 +18,20 @@ function save(name: string, type: string, text: string) {
 }
 
 export function Reports() {
-  const { scenarios, custom, moon, mission, windows, earthMarginDeg, landingMs, days } = useStore()
+  const { scenarios, moon, mission, windows, earthMarginDeg, landingMs, days } = useStore()
   const [note, setNote] = useState('')
   const rows = useMemo(() => scenarios.map((sc, i) => {
-    const site = findSite(sc.siteId, custom)
+    const site = findSite(sc.siteId)
     const h = horizonFor(site, moon)
     const n = Math.min(960, Math.round(sc.days * 96))
     const m = summarize(computeSeries(makeFrame(site.lat, site.lon), h, sc.landingMs, (sc.days * DAY) / (n - 1), n, earthMarginDeg))
     const st = scoreStay(m, slopeAt(site))
     return { letter: 'ABCDEF'[i], sc, site, m, horizon: h, score: st.score, backendScore: st.backendScore, blockers: st.blockers }
-  }), [scenarios, custom, moon, earthMarginDeg])
+  }), [scenarios, moon, earthMarginDeg])
   // the same ranking the Explorer shows, for the landing date and stay chosen there
-  const ranking = useMemo(() => rankSites([...SITES.filter((s) => s.group === 'South Pole'), ...custom.filter((s) => s.lat <= RANKING_MAX_LAT)], landingMs, days, earthMarginDeg),
+  const ranking = useMemo(() => rankSites(SITES, landingMs, days, earthMarginDeg),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [custom, landingMs, days, earthMarginDeg, moon])
+    [landingMs, days, earthMarginDeg, moon])
 
   const json = () => JSON.stringify({
     generated: new Date().toISOString(), tool: 'KURO', dataSource: dataSourceLabel(),
@@ -70,7 +70,7 @@ export function Reports() {
           <h2>Landing dates that meet every requirement</h2>
           <table className="plain"><thead><tr><th>Site</th><td><b>Dates passing</b></td><td><b>Longest run</b></td></tr></thead><tbody>
             {[...windows].sort((a, b) => b.passCount - a.passCount).map((w) => (
-              <tr key={w.siteId}><th>{findSite(w.siteId, custom).name}</th><td>{w.passCount} of {w.days.length}</td><td>{w.bestRun ? `${w.bestRun.days} days from ${w.bestRun.start}` : 'none'}</td></tr>
+              <tr key={w.siteId}><th>{findSite(w.siteId).name}</th><td>{w.passCount} of {w.days.length}</td><td>{w.bestRun ? `${w.bestRun.days} days from ${w.bestRun.start}` : 'none'}</td></tr>
             ))}
           </tbody></table>
         </>

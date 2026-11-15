@@ -97,6 +97,7 @@ export function SitePanel({ site, sky, events, summary, series, horizon }: { sit
         <section className="sp-sec">
           <h3>This {days}-day stay</h3>
           <p className="sp-sub">From {fmtUtc(landingMs)} UTC</p>
+          {!series.complete ? <p className="err pad" role="alert">Part of this stay is past the end of the Sun and Earth table (2049). Choose an earlier landing or a shorter stay; nothing is extrapolated.</p> : (
           <dl className="sp-grid">
             <div><dt>Sunlight available</dt><dd>{summary.sunPct.toFixed(0)}<small>%</small></dd></div>
             <div><dt>Earth in view</dt><dd>{summary.earthPct.toFixed(0)}<small>%</small></dd></div>
@@ -104,7 +105,7 @@ export function SitePanel({ site, sky, events, summary, series, horizon }: { sit
             <div><dt>Longest radio gap</dt><dd>{fmtHours(summary.longestOutageH)}</dd></div>
             <div><dt>Highest Sun</dt><dd>{summary.peakSunEl.toFixed(1)}<small>°</small></dd></div>
             <div><dt>Sun and Earth together</dt><dd>{summary.bothPct.toFixed(0)}<small>%</small></dd></div>
-          </dl>
+          </dl>)}
         </section>
 
         <section className="sp-sec words">

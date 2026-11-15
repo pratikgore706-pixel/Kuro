@@ -1,0 +1,110 @@
+{
+ "generated": "2026-11-14T09:09:18.402Z",
+ "color": {
+  "file": "color.jpg",
+  "width": 4096,
+  "height": 2048,
+  "projection": "equirectangular, −180…180",
+  "source": "NASA Moon Trek, LRO WAC global mosaic (greyscale, 303 ppd source), stitched at 4096×2048"
+ },
+ "global": {
+  "file": "global.u16",
+  "type": "uint16",
+  "width": 2880,
+  "height": 1440,
+  "projection": "equirectangular, longitude −180…180 left→right, latitude 90…−90 top→bottom",
+  "heightMeters": "value / 2 − 10000",
+  "referenceRadiusM": 1737400,
+  "minM": -8729,
+  "maxM": 10552.5,
+  "pixelDeg": 0.125,
+  "source": "NASA PDS LOLA GDR LDEM_16 (LRO-L-LOLA-4-GDR-V1.0, 1895 m/pix), 2×2 averaged",
+  "packed": {
+   "file": "global.pack",
+   "codec": "row-delta byte-planes gzip",
+   "bytes": 5422417
+  }
+ },
+ "pole": {
+  "file": "pole.i16",
+  "type": "int16",
+  "width": 1900,
+  "height": 1900,
+  "noData": -32768,
+  "heightMeters": "value",
+  "referenceRadiusM": 1737400,
+  "x0": -304000,
+  "y0": 304000,
+  "pixelM": 320,
+  "projection": "south polar stereographic, true scale at the pole, sphere R = 1737.4 km, MOON_ME frame (DE421)",
+  "geoKeys": {
+   "GTModelTypeGeoKey": 1,
+   "GTRasterTypeGeoKey": 1,
+   "GTCitationGeoKey": "Moon (2015) - Sphere / Ocentric / South Polar",
+   "GeographicTypeGeoKey": 32767,
+   "GeogCitationGeoKey": "GCS Name = Moon (2015) - Sphere / Ocentric|Datum = Moon (2015) - Sphere|Ellipsoid = Moon (2015) - Sphere|Primem = Reference Meridian|",
+   "GeogGeodeticDatumGeoKey": 32767,
+   "GeogAngularUnitsGeoKey": 9102,
+   "GeogEllipsoidGeoKey": 32767,
+   "GeogSemiMajorAxisGeoKey": 1737400,
+   "GeogSemiMinorAxisGeoKey": 1737400,
+   "GeogPrimeMeridianLongGeoKey": 0,
+   "ProjectedCSTypeGeoKey": 32767,
+   "ProjectionGeoKey": 32767,
+   "ProjCoordTransGeoKey": 15,
+   "ProjLinearUnitsGeoKey": 9001,
+   "ProjNatOriginLatGeoKey": -90,
+   "ProjFalseEastingGeoKey": 0,
+   "ProjFalseNorthingGeoKey": 0,
+   "ProjScaleAtNatOriginGeoKey": 1,
+   "ProjStraightVertPoleLongGeoKey": 0
+  },
+  "source": "NASA GSFC PGDA product 90, LDEM_80S_80MPP_ADJ (Barker et al. 2023, PSJ 4, 183)",
+  "packed": {
+   "file": "pole.pack",
+   "codec": "row-delta byte-planes gzip",
+   "bytes": 3688852
+  }
+ },
+ "poleHi": {
+  "file": "pole_hi.i16",
+  "type": "int16",
+  "width": 2048,
+  "height": 2048,
+  "noData": -32768,
+  "heightMeters": "value",
+  "referenceRadiusM": 1737400,
+  "x0": -81920,
+  "y0": 81920,
+  "pixelM": 80,
+  "projection": "south polar stereographic, true scale at the pole, sphere R = 1737.4 km, MOON_ME frame (DE421)",
+  "geoKeys": {
+   "GTModelTypeGeoKey": 1,
+   "GTRasterTypeGeoKey": 1,
+   "GTCitationGeoKey": "Moon (2015) - Sphere / Ocentric / South Polar",
+   "GeographicTypeGeoKey": 32767,
+   "GeogCitationGeoKey": "GCS Name = Moon (2015) - Sphere / Ocentric|Datum = Moon (2015) - Sphere|Ellipsoid = Moon (2015) - Sphere|Primem = Reference Meridian|",
+   "GeogGeodeticDatumGeoKey": 32767,
+   "GeogAngularUnitsGeoKey": 9102,
+   "GeogEllipsoidGeoKey": 32767,
+   "GeogSemiMajorAxisGeoKey": 1737400,
+   "GeogSemiMinorAxisGeoKey": 1737400,
+   "GeogPrimeMeridianLongGeoKey": 0,
+   "ProjectedCSTypeGeoKey": 32767,
+   "ProjectionGeoKey": 32767,
+   "ProjCoordTransGeoKey": 15,
+   "ProjLinearUnitsGeoKey": 9001,
+   "ProjNatOriginLatGeoKey": -90,
+   "ProjFalseEastingGeoKey": 0,
+   "ProjFalseNorthingGeoKey": 0,
+   "ProjScaleAtNatOriginGeoKey": 1,
+   "ProjStraightVertPoleLongGeoKey": 0
+  },
+  "source": "NASA GSFC PGDA product 90, LDEM_80S_80MPP_ADJ (Barker et al. 2023, PSJ 4, 183)",
+  "packed": {
+   "file": "pole_hi.pack",
+   "codec": "row-delta byte-planes gzip",
+   "bytes": 2713768
+  }
+ }
+}

@@ -1,95 +1,71 @@
-import { useMemo } from 'react'
-import { Radio, Sun as SunIcon } from 'lucide-react'
+import { useState } from 'react'
+import { Info } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
 import { SITES } from '../data/sites'
-import { rankReason } from '../engine/explain'
-import { fmtHours } from '../engine/time'
-import { useEarthMargin } from '../hooks'
-import { RANKING_LABELS, RANKING_MAX_LAT, RANKING_WEIGHTS, rankSites, type ComponentScores } from '../services/api'
+import { fmtUtc } from '../engine/time'
 import { useStore } from '../store'
+import { SiteStoryModal, scoreTone } from './SiteStoryModal'
+import { useRanked } from './useRanked'
 
-const TOP_N = 5
-
-function scoreTone(score: number | null): string {
-  if (score === null) return 'na'
-  if (score >= 70) return 'good'
-  if (score >= 45) return 'mid'
-  return 'low'
-}
+const TOP = 10
 
 /**
- * Candidate sites scored for the landing date and stay chosen in the time bar: the named South Pole sites plus
- * any custom sites the user added south of 80°S. Click a row to select the site; the selected row shows why it
- * scored what it did.
+ * The 78 candidate sites ranked for the landing date and stay chosen above: rank, name and score only.
+ * Clicking a row selects the site; its Details button opens KURO's plain-language explanation.
  */
-export function RankingPanel() {
+export function RankingPanel({ onFly }: { onFly: (id: string) => void }) {
   const siteId = useStore((s) => s.siteId)
   const select = useStore((s) => s.selectSite)
   const landingMs = useStore((s) => s.landingMs)
   const days = useStore((s) => s.days)
-  const moon = useStore((s) => s.moon)
-  const custom = useStore((s) => s.custom)
-  const margin = useEarthMargin()
+  const ready = useStore((s) => s.horizonsReady)
+  const ranked = useRanked()
+  const navigate = useNavigate()
+  const [all, setAll] = useState(false)
+  const [details, setDetails] = useState<string | null>(null)
 
-  const candidates = useMemo(() => [...SITES.filter((s) => s.group === 'South Pole'), ...custom.filter((s) => s.lat <= RANKING_MAX_LAT)], [custom])
-  // Recomputed only when the date, stay, candidates, antenna margin or loaded terrain change — not on every
-  // re-render (e.g. while the cursor plays through the stay). `moon` is listed because rankSites reads the
-  // loaded terrain through getMoonData().
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const ranked = useMemo(() => rankSites(candidates, landingMs, days, margin), [candidates, landingMs, days, margin, moon])
-  const terrainReady = !!moon?.pole
-
+  if (!ranked) {
+    return (
+      <section className="xp-rank" aria-label="Landing-site ranking" aria-busy="true">
+        <header><h2>Best landing sites</h2><span className="xp-rank-days">{days} days</span></header>
+        <div className="xp-rank-wait"><i style={{ width: `${(100 * Math.min(ready, SITES.length)) / SITES.length}%` }} /><span>Reading the hills around the landing sites: {Math.min(ready, SITES.length)} of {SITES.length}</span></div>
+      </section>
+    )
+  }
+  const di = details ? ranked.findIndex((r) => r.siteId === details) : -1
+  const rows = all ? ranked : ranked.slice(0, TOP)
+  const selIdx = ranked.findIndex((r) => r.siteId === siteId)
   return (
     <section className="xp-rank" aria-label="Landing-site ranking for this stay">
       <header>
-        <h2>Best sites for this landing</h2>
+        <h2>Best landing sites</h2>
         <span className="xp-rank-days">{days} days</span>
       </header>
-      <p className="xp-rank-note">
-        {terrainReady ? 'South Pole sites scored out of 100 with the KURO backend’s formula, for the date above. Click one to see why.' : 'Scored on sunlight and Earth only. Install LOLA elevation for slope and safety.'}
-      </p>
-      <ol className="xp-rank-list">
-        {ranked.map((r, i) => {
-          const on = r.siteId === siteId
-          const top = i < TOP_N && r.score !== null
+      <p className="xp-rank-note">All {ranked.length} sites, scored for a landing on {fmtUtc(landingMs)} UTC.</p>
+      <ol className="xp-rank-list xp-ranks">
+        {rows.map((x, i) => {
+          const on = x.siteId === siteId
           return (
-            <li key={r.siteId}>
-              <button className={'xp-rank-row' + (on ? ' on' : '') + (top ? ' top' : '')} onClick={() => select(r.siteId)} aria-pressed={on} aria-expanded={on} title={rankReason(r, r.summary, r.slopeDeg, days)}>
-                <span className={'xp-rank-n' + (top ? ' top' : '')}>{i + 1}</span>
-                <span className="xp-rank-body">
-                  <span className="nm">{r.site.name}</span>
-                  <span className="xp-rank-stats mono">
-                    <span className="stat" title="Sunlight available (share of the Sun's disc in view)"><SunIcon size={11} aria-hidden="true" />{r.summary.sunPct.toFixed(0)}%</span>
-                    <span className="stat" title={`Earth in view${margin ? ` (at least ${margin}° above the hills)` : ''}`}><Radio size={11} aria-hidden="true" />{r.summary.earthPct.toFixed(0)}%</span>
-                    {r.blockers.length > 0 && <span className="stat blocker">{r.blockers.join(', ')}</span>}
-                  </span>
-                </span>
-                <span className={'xp-rank-score ' + scoreTone(r.score) + (r.blockers.length ? ' blocked' : '')} title="Overall score out of 100">{r.score === null ? '—' : Math.round(r.score)}</span>
+            <li key={x.siteId} className={'xp-rk' + (on ? ' on' : '')}>
+              <button className="xp-rk-pick" onClick={() => select(x.siteId)} aria-pressed={on} aria-label={`Rank ${i + 1}: ${x.site.name}, score ${x.score === null ? 'none' : Math.round(x.score)}. Select`}>
+                <span className={'xp-rk-n mono' + (i === 0 ? ' top' : '')}>{String(i + 1).padStart(2, '0')}</span>
+                <span className="xp-rk-nm">{x.site.name}</span>
+                <span className={'xp-rk-sc mono ' + scoreTone(x.score)}>{x.score === null ? '—' : Math.round(x.score)}</span>
               </button>
-              {on && (
-                <div className="xp-rank-why">
-                  <p className="why-say">{rankReason(r, r.summary, r.slopeDeg, days)}</p>
-                  {(Object.keys(RANKING_WEIGHTS) as (keyof ComponentScores)[]).map((k) => {
-                    const v = r.componentScores[k], c = r.componentCompleteness[k]
-                    const partial = v !== null && c !== null && c < 99.5
-                    return (
-                      <div key={k} className="why-row" title={`${RANKING_LABELS[k]} counts ${Math.round(RANKING_WEIGHTS[k] * 100)}% of the score${partial ? `; ${Math.round(c!)}% of its inputs are available, so it counts for less` : ''}`}>
-                        <span>{RANKING_LABELS[k]}{partial && <sup aria-label={`${Math.round(c!)}% of inputs available`}>*</sup>}</span>
-                        <i><b style={{ width: `${v ?? 0}%` }} className={scoreTone(v)} /></i>
-                        <span>{v === null ? '—' : Math.round(v)}</span>
-                      </div>
-                    )
-                  })}
-                  {r.blockers.length > 0 && <p className="blocker">Score 0 by KURO’s rule: {r.blockers.join(' and ')} during this stay. The backend formula alone gives {r.backendScore === null ? '—' : Math.round(r.backendScore)}.</p>}
-                  <p className="why-fine">
-                    Slope {r.slopeDeg === null ? 'unknown' : `${r.slopeDeg.toFixed(1)}°`}, longest dark {fmtHours(r.summary.longestDarkH)}, longest radio gap {fmtHours(r.summary.longestOutageH)}.
-                    {' '}* Uses {Math.round(r.completenessPct)}% of the backend’s inputs: no roughness or hazard map at 80 m.
-                  </p>
-                </div>
-              )}
+              <button className="xp-rk-info" onClick={() => setDetails(x.siteId)} aria-label={`Details for ${x.site.name}`} title="Details">
+                <Info size={15} aria-hidden="true" /><span>Details</span>
+              </button>
             </li>
           )
         })}
       </ol>
+      {!all && selIdx >= TOP && <p className="xp-rank-note">Selected: {ranked[selIdx].site.name}, rank {selIdx + 1}.</p>}
+      <button className="xp-story-all" onClick={() => setAll(!all)} aria-expanded={all}>{all ? `Show only the top ${TOP}` : `Show all ${ranked.length} sites`}</button>
+      {di >= 0 && (
+        <SiteStoryModal ranked={ranked} index={di} days={days} onClose={() => setDetails(null)}
+          onFly={(id) => { setDetails(null); onFly(id) }}
+          onCompare={(id) => navigate(`/compare?site=${encodeURIComponent(id)}`)} />
+      )}
     </section>
   )
 }

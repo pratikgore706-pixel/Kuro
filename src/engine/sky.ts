@@ -152,8 +152,11 @@ export function summarize(s: Series): Summary {
     prevUp = up
   }
   const hStep = s.stepMs / HOUR
+  // n samples span (n − 1) steps: a run can't be longer than the stay itself
+  const spanH = Math.max(0, s.n - 1) * hStep
+  maxDark = Math.min(maxDark, Math.ceil(spanH / hStep)); maxOut = Math.min(maxOut, Math.ceil(spanH / hStep))
   const st = seriesStatuses(s)
-  return { sunPct: (100 * sun) / s.n, sunAnyPct: (100 * any) / s.n, peakSunEl: peak, longestDarkH: maxDark * hStep, earthPct: (100 * earth) / s.n, longestOutageH: maxOut * hStep, commWindows: windows, bothPct: (100 * both) / s.n, peakGroundK: equilibriumK(SOLAR_CONSTANT * maxGround), backend: summarizeStatuses(st.sun, st.earth, s.stepMs / 1000) }
+  return { sunPct: (100 * sun) / s.n, sunAnyPct: (100 * any) / s.n, peakSunEl: peak, longestDarkH: Math.min(maxDark * hStep, spanH), earthPct: (100 * earth) / s.n, longestOutageH: Math.min(maxOut * hStep, spanH), commWindows: windows, bothPct: (100 * both) / s.n, peakGroundK: equilibriumK(SOLAR_CONSTANT * maxGround), backend: summarizeStatuses(st.sun, st.earth, s.stepMs / 1000) }
 }
 
 export interface SkyEvent { ms: number; type: 'rise' | 'set' }
@@ -177,9 +180,26 @@ export function nextEvent(f: SiteFrame, h: Horizon, fromMs: number, body: 'sun' 
     if (s === null) return null
     if (s !== s0) {
       let lo = t - step, hi = t
-      while (hi - lo > 20000) { const mid = (lo + hi) / 2; if (state(mid) === s0) lo = mid; else hi = mid }
+      while (hi - lo > 1000) { const mid = (lo + hi) / 2; if (state(mid) === s0) lo = mid; else hi = mid }
       return { ms: hi, type: s0 ? 'set' : 'rise' }
     }
   }
   return null
+}
+
+/**
+ * A cached next-event answer, valid for the instant `ms`: if the cached event is already at or behind `ms`, the
+ * next event is searched again from `ms` itself.
+ */
+export function freshEvent(ev: SkyEvent | null, f: SiteFrame, h: Horizon, ms: number, body: 'sun' | 'earth', earthMarginDeg = 0): SkyEvent | null {
+  const margin = body === 'earth' ? earthMarginDeg : 0
+  if (!ev) return ev
+  if (ev.ms > ms) {
+    // still ahead — but make sure the sky at `ms` is in the state the event leaves (a set needs the body up now)
+    const k = computeSky(f, h, ms, newSky(), margin)
+    if (!k.ok) return null
+    const up = body === 'sun' ? k.sunFrac > 0 : k.earthUp
+    if (up === (ev.type === 'set')) return ev
+  }
+  return nextEvent(f, h, ms, body, 60, margin)
 }

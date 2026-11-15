@@ -1,19 +1,23 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Camera, CarFront, ChevronLeft, ChevronRight, Compass, Crosshair, Globe2, Keyboard, Layers, Link2, Map as MapIcon, MapPin, Maximize2, Minimize2, Moon, Mountain, Plane, RotateCcw, Ruler, Sun, X } from 'lucide-react'
+import { Camera, CarFront, ChevronLeft, ChevronRight, Compass, Crosshair, Globe2, Keyboard, Layers, Link2, MapPin, Maximize2, Minimize2, Moon, Mountain, Plane, RotateCcw, Ruler, Sun, X } from 'lucide-react'
 import { useSearchParams } from 'react-router-dom'
 import { Astronaut, Satellite } from '../components/Art'
+import { ExplorerGuide } from '../components/ExplorerGuide'
+import { LandingIntro } from '../components/LandingIntro'
 import { LandingPicker } from '../components/LandingPicker'
 import { RankingPanel } from '../components/RankingPanel'
+import { useRanked } from '../components/useRanked'
+import { buildKuroRover } from './engine/KuroRover'
 import { SiteList } from '../components/SiteList'
 import { SitePanel } from '../components/SitePanel'
 import { SkyChart } from '../components/SkyChart'
 import { TimeBar } from '../components/TimeBar'
-import { SITES, fmtLat, fmtLon } from '../data/sites'
+import { SITES, fmtLat, fmtLon, nearestSite } from '../data/sites'
 import { DAY } from '../engine/time'
 import { computeSky, newSky } from '../engine/sky'
-import { useEarthMargin, useEvents, useFrame, useHorizon, useSeries, useSkyAt } from '../hooks'
+import { useEarthMargin, useEvents, useFrame, useHorizon, useSeries, useSkyAt, warmHorizons } from '../hooks'
 import { useSite, useStore } from '../store'
-import { ExplorerEngine, type EngineStatus, type HoverInfo, type Lighting, type MapKind, type MeasureResult, type ViewMode } from './engine/ExplorerEngine'
+import { ExplorerEngine, type CinePhase, type EngineStatus, type HoverInfo, type Lighting, type MapKind, type MeasureResult, type ViewMode } from './engine/ExplorerEngine'
 import type { LayerId } from './engine/glsl'
 import { LAYERS, gradient, isTerrainView } from './legend'
 import { Controls, RoverHud } from './Controls'
@@ -21,12 +25,13 @@ import type { RoverTelemetry } from './engine/Rover'
 import { HoverHud, MeasurePanel, ScaleBar, Tour, type TourStep } from './Overlays'
 import { signal } from './signal'
 
+const COMPASS = ['north', 'north-east', 'east', 'south-east', 'south', 'south-west', 'west', 'north-west']
+
 type ViewDef = { id: ViewMode; label: string; hint: string; icon: typeof Globe2 }
-/** Views ordered by scale, in three groups: the whole Moon, the polar terrain, and on the ground. Keys 1–5 select them. */
+/** Views ordered by scale, in three groups: the whole Moon, the polar terrain, and on the ground. Keys 1–4 select them. */
 const VIEW_GROUPS: ViewDef[][] = [
   [
     { id: 'globe', label: 'Globe', hint: 'The whole Moon in 3D', icon: Globe2 },
-    { id: 'map', label: 'Map', hint: 'The Moon unrolled, or the pole from above', icon: MapIcon },
   ],
   [
     { id: 'pole', label: 'Pole', hint: 'The South Pole in 3D: 600 km of LOLA terrain', icon: Mountain },
@@ -49,8 +54,8 @@ export function ExplorerPage() {
   const host = useRef<HTMLDivElement>(null)
   const engine = useRef<ExplorerEngine | null>(null)
   const site = useSite()
-  const { landingMs, days, cursorMs, custom, moon } = useStore()
-  const { selectSite, addCustom, setLanding, setDays, setCursor } = useStore()
+  const { landingMs, days, cursorMs, moon } = useStore()
+  const { selectSite, setLanding, setDays, setCursor } = useStore()
   const [params] = useSearchParams()
   const [storedMode, setMode] = useLocal<ViewMode>('kuro.view', 'globe')
   // views that no longer exist (the old standing view) fall back to the globe
@@ -65,10 +70,18 @@ export function ExplorerPage() {
   const [panels, setPanels] = useLocal('kuro.panels3', { sites: false, info: true, layers: false, sky: false })
   const [status, setStatus] = useState<EngineStatus | null>(null)
   const [help, setHelp] = useState(false)
+  // KURO's welcome: asks for the landing date first — except when a shared link or the tour already says what to show
+  const [intro, setIntro] = useState(() => !['site', 'land', 'tour'].some((k) => params.has(k)))
+  const closeIntro = useCallback(() => setIntro(false), [])
+  // the rover tour that plays after a site is picked: fly down, circle the rover, look at the Sun, then Earth
+  const [phase, setPhase] = useState<CinePhase | null>(null)
+  const pendingTour = useRef(false)
   const [webgl, setWebgl] = useState(true)
   const [measuring, setMeasuring] = useState(false)
   const [measure, setMeasure] = useState<MeasureResult | null>(null)
   const [tour, setTour] = useState<number | null>(null)
+  // the guide: a spotlight walk round every control (the scenic camera tour is its last step's option)
+  const [guide, setGuide] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
   const [full, setFull] = useState(false)
   const [, force] = useState(0)
@@ -83,7 +96,7 @@ export function ExplorerPage() {
   const { series, summary } = useSeries(site, landingMs, days)
   const sky = useSkyAt(site, cursorMs)
   const events = useEvents(site, cursorMs)
-  const marks = useMemo(() => [...SITES, ...custom].map((s) => ({ id: s.id, name: s.name, lat: s.lat, lon: s.lon, note: s.note })), [custom])
+  const marks = useMemo(() => SITES.map((s) => ({ id: s.id, name: s.name, lat: s.lat, lon: s.lon, note: s.note })), [])
   const terrainView = isTerrainView(mode, mapKind)
   const family = mode === 'rover' || mode === 'surface' ? 'ground' : terrainView ? 'terrain' : 'space'
   const setLayer = (l: LayerId) => setLayers({ ...layers, [family]: l })
@@ -94,7 +107,7 @@ export function ExplorerPage() {
   // a shared link (#/explorer?site=…&view=…) opens exactly that view
   useEffect(() => {
     const g = (k: string) => params.get(k)
-    const sid = g('site'); if (sid && [...SITES, ...custom].some((s) => s.id === sid)) selectSite(sid)
+    const sid = g('site'); if (sid && SITES.some((s) => s.id === sid)) selectSite(sid)
     const v = g('view') as ViewMode | null; if (v && MODES.includes(v)) setMode(v)
     const mk = g('map'); if (mk === 'global' || mk === 'pole') setMapKind(mk)
     const lt = g('light'); if (lt === 'sun' || lt === 'full') setLighting(lt)
@@ -112,13 +125,19 @@ export function ExplorerPage() {
     try {
       engine.current = new ExplorerEngine(host.current, {
         onSelect: selectSite,
-        onPick: (lat, lon) => addCustom(lat, lon),
+        // double-click: the nearest of the 78 candidate sites (custom points are not offered)
+        onPick: (lat, lon) => { const n = nearestSite(lat, lon); selectSite(n.id); setToast(`Nearest candidate site: ${n.name}`) },
         onHover: hoverSig.set,
         onStatus: setStatus,
         onRover: roverSig.set,
         onMeasure: setMeasure,
         onMeasureMode: setMeasuring,
       })
+      // the same KURO rover as on the Compare page
+      engine.current.setRoverModel(buildKuroRover())
+      // smooth on every screen: at most 60 frames a second (fast monitors would draw up to 144) and at most
+      // 1.5 device pixels per CSS pixel (2× costs nearly twice the work for little visible gain)
+      engine.current.setPerformance({ maxFps: 60, pixelRatio: Math.min(window.devicePixelRatio || 1, 1.5) })
       force((x) => x + 1)
     } catch { setWebgl(false) }
     return () => { engine.current?.dispose(); engine.current = null }
@@ -126,10 +145,41 @@ export function ExplorerPage() {
   }, [])
 
   const e = engine.current
+  const ranked = useRanked()
+  /** Fly to a site in the rover view and play KURO's camera tour (from the welcome dialog or a site's details). */
+  const landAt = useCallback((id: string) => {
+    setIntro(false); setTour(null); setPhase(null)
+    if (mode === 'rover' && site.id === id && engine.current) {
+      engine.current.focusSelected(true)
+      engine.current.roverIntro((p) => setPhase(p === 'done' ? null : p))
+      return
+    }
+    pendingTour.current = true
+    selectSite(id)
+    setMode('rover')
+  }, [mode, site.id, selectSite, setMode])
+  const rankIdx = ranked ? ranked.findIndex((r) => r.siteId === site.id) : -1
+  const rk = rankIdx >= 0 ? ranked![rankIdx] : null
+  const where = (el: number, az: number) => `${Math.abs(el).toFixed(1)}° ${el >= 0 ? 'up' : 'below'}, ${COMPASS[Math.round((((az % 360) + 360) % 360) / 45) % 8]}`
+  const caption = phase === 'arrive' ? { k: rk ? `Rank ${String(rankIdx + 1).padStart(2, '0')} · ${rk.score === null ? '—' : Math.round(rk.score)} / 100` : site.group, t: site.name }
+    : phase === 'orbit' ? { k: 'The landing spot', t: rk?.slopeDeg == null ? site.name : `Ground slope ${rk.slopeDeg.toFixed(1)}° — ${rk.slopeDeg <= 5 ? 'gentle' : rk.slopeDeg < 15 ? 'moderate' : 'steep'}` }
+    : phase === 'sun' ? { k: 'Where is the Sun?', t: `${sky.sunFrac >= 0.999 ? 'Sun fully up' : sky.sunFrac > 0 ? `${Math.round(sky.sunFrac * 100)}% of the Sun visible` : sky.sunEl > 0 ? 'Sun behind the hills' : 'Sun below the horizon'} · ${where(sky.sunEl, sky.sunAz)}` }
+    : phase === 'earth' ? { k: 'Where is Earth?', t: `${sky.earthUp ? 'Earth in view' : sky.earthEl > 0 ? 'Earth behind the hills' : 'Earth below the horizon'} · ${where(sky.earthEl, sky.earthAz)}` }
+    : phase === 'settle' ? { k: 'Your turn', t: 'Drive with W A S D — drag to look around' }
+    : null
   useEffect(() => { if (moon) engine.current?.setData(moon) }, [moon])
+  useEffect(() => { if (moon) warmHorizons(SITES, moon.ok ? moon : null) }, [moon])
   useEffect(() => { engine.current?.setSites(marks, site.id) }, [marks, site.id])
   useEffect(() => { engine.current?.setMapKind(mapKind) }, [mapKind])
   useEffect(() => { engine.current?.setMode(mode) }, [mode])
+  // after a pick: once the site and the rover view are set, place the rover and play the camera tour
+  useEffect(() => {
+    const en = engine.current
+    if (!pendingTour.current || !en || mode !== 'rover') return
+    pendingTour.current = false
+    en.focusSelected(true)
+    en.roverIntro((p) => setPhase(p === 'done' ? null : p))
+  }, [site.id, mode])
   useEffect(() => { engine.current?.setLayer(effLayer) }, [effLayer])
   useEffect(() => { engine.current?.setExaggeration(exag.globe, exag.terrain) }, [exag])
   useEffect(() => { engine.current?.setOptions(opts) }, [opts])
@@ -179,12 +229,12 @@ export function ExplorerPage() {
   const fullscreen = () => { if (document.fullscreenElement) void document.exitFullscreen(); else void root.current?.requestFullscreen?.() }
 
   const tourSteps: TourStep[] = [
-    { title: 'The Moon, all of it', text: 'Every crater here is real: NASA’s LRO camera mosaic draped over LOLA laser-altimeter heights. Drag to turn it, scroll to zoom; the picture sharpens as you get closer.', apply: () => { selectSite('a11'); setMode('globe'); setLighting('full'); setLayers({ ...layers, space: 'imagery' }) } },
-    { title: 'Colour shows height', text: 'Violet is low, gold is high. The South Pole–Aitken basin, one of the largest impact basins in the Solar System, is the great violet scar across the southern far side.', apply: () => { selectSite('ce4'); setMode('globe'); setLighting('full'); setLayers({ ...layers, space: 'colour' }) } },
-    { title: 'Sunlight from the side', text: 'At the South Pole the Sun never rises more than about 1.5° above a flat horizon. Crater floors can stay dark for billions of years while nearby ridges are lit for most of the year.', apply: () => { selectSite('shackleton'); setMode('pole'); setLighting('sun'); setLayers({ ...layers, terrain: 'sun' }) } },
-    { title: 'Light across a whole stay', text: 'This layer traces terrain shadows through the chosen stay. Bright ridges keep a lander’s solar panels powered; dark floors mean batteries and heaters.', apply: () => { selectSite('shackleton'); setMode('pole'); setLighting('sun'); setLayers({ ...layers, terrain: 'sunStay' }) } },
-    { title: 'Fly over Mons Mouton', text: 'IM-2 Athena touched down here on 6 March 2025. Fly with W A S D, climb with E or Space, descend with Q, turn with the arrow keys. Zoom in and the terrain sharpens.', apply: () => { selectSite('im2'); setMode('drone'); setLighting('sun'); setLayers({ ...layers, terrain: 'imagery' }) } },
-    { title: 'Drive a rover', text: 'W and S drive, A and D steer, Space brakes. The amber and blue arcs in the sky are the Sun’s and Earth’s paths across your stay; the rover reports sunlight and Earth contact where it stands, traced from LOLA terrain out to 300 km.', apply: () => { selectSite('im2'); setMode('rover'); setLighting('sun'); setLayers({ ...layers, ground: 'imagery' }) } },
+    { title: 'The Moon, all of it', text: 'Every crater here is real: NASA’s LRO camera mosaic draped over LOLA laser-altimeter heights. Drag to turn it, scroll to zoom; the picture sharpens as you get closer.', apply: () => { setMode('globe'); setLighting('full'); setLayers({ ...layers, space: 'imagery' }) } },
+    { title: 'Colour shows height', text: 'Violet is low, gold is high. The South Pole–Aitken basin, one of the largest impact basins in the Solar System, is the great violet scar across the southern far side.', apply: () => { setMode('globe'); setLighting('full'); setLayers({ ...layers, space: 'colour' }) } },
+    { title: 'Sunlight from the side', text: 'At the South Pole the Sun never rises more than about 1.5° above a flat horizon. Crater floors can stay dark for billions of years while nearby ridges are lit for most of the year.', apply: () => { selectSite('dGR201'); setMode('pole'); setLighting('sun'); setLayers({ ...layers, terrain: 'sun' }) } },
+    { title: 'Light across a whole stay', text: 'This layer traces terrain shadows through the chosen stay. Bright ridges keep a lander’s solar panels powered; dark floors mean batteries and heaters.', apply: () => { selectSite('dGR201'); setMode('pole'); setLighting('sun'); setLayers({ ...layers, terrain: 'sunStay' }) } },
+    { title: 'Fly over Mons Mouton', text: 'IM-2 Athena touched down on Mons Mouton on 6 March 2025; this candidate site is on the same mountain. Fly with W A S D, climb with E or Space, descend with Q, turn with the arrow keys. Zoom in and the terrain sharpens.', apply: () => { selectSite('MMO01'); setMode('drone'); setLighting('sun'); setLayers({ ...layers, terrain: 'imagery' }) } },
+    { title: 'Drive a rover', text: 'W and S drive, A and D steer, Space brakes. The amber and blue arcs in the sky are the Sun’s and Earth’s paths across your stay; the rover reports sunlight and Earth contact where it stands, traced from LOLA terrain out to 300 km.', apply: () => { selectSite('MMO01'); setMode('rover'); setLighting('sun'); setLayers({ ...layers, ground: 'imagery' }) } },
   ]
 
   const toggles = ([
@@ -221,18 +271,12 @@ export function ExplorerPage() {
             )
           })}
         </div>
-        {mode === 'map' && (
-          <div className="xp-views-sub" role="radiogroup" aria-label="Map extent">
-            <button role="radio" aria-checked={mapKind === 'global'} className={mapKind === 'global' ? 'on' : ''} onClick={() => setMapKind('global')}>Whole Moon</button>
-            <button role="radio" aria-checked={mapKind === 'pole'} className={mapKind === 'pole' ? 'on' : ''} onClick={() => setMapKind('pole')}>South Pole</button>
-          </div>
-        )}
       </nav>
 
       {/* tools */}
       <div className="xp-toolbar" role="toolbar" aria-label="Tools" aria-orientation="vertical" data-occlude>
         <button className={'xp-tool' + (measuring || measure ? ' on' : '')} onClick={() => e?.setMeasuring(!measuring)} aria-pressed={measuring} aria-label="Measure distance and elevation profile" data-tip="Measure distance and height (M)"><Ruler size={16} strokeWidth={1.8} /></button>
-        <button className={'xp-tool' + (tour !== null ? ' on' : '')} onClick={() => { if (tour === null) { e?.setMeasuring(false); e?.clearMeasure() } setTour(tour === null ? 0 : null) }} aria-pressed={tour !== null} aria-label="Guided tour" data-tip="Guided tour"><Compass size={16} strokeWidth={1.8} /></button>
+        <button className={'xp-tool' + (guide || tour !== null ? ' on' : '')} onClick={() => { e?.setMeasuring(false); e?.clearMeasure(); setTour(null); setGuide(!guide) }} aria-pressed={guide} aria-label="Guide to the Explorer" data-tip="Guide"><Compass size={16} strokeWidth={1.8} /></button>
         <i className="xp-tool-sep" aria-hidden="true" />
         <button className="xp-tool" onClick={() => e?.focusSelected()} aria-label="Go to the selected site" data-tip="Go to the selected site (F)"><Crosshair size={16} strokeWidth={1.8} /></button>
         <button className="xp-tool" onClick={() => e?.resetView()} aria-label="Reset view" data-tip="Reset view (R)"><RotateCcw size={16} strokeWidth={1.8} /></button>
@@ -247,7 +291,7 @@ export function ExplorerPage() {
       <div className="xp-colL">
         <div className="xp-plan glass" data-occlude>
           <LandingPicker />
-          <RankingPanel />
+          <RankingPanel onFly={landAt} />
           <footer className="xp-planfoot">
             <button className={'xp-foot' + (panels.sites ? ' on' : '')} onClick={() => setPanels({ ...panels, sites: !panels.sites, layers: false })} aria-expanded={panels.sites} aria-haspopup="dialog">
               <MapPin size={15} aria-hidden="true" /><span>All sites</span>
@@ -337,7 +381,7 @@ export function ExplorerPage() {
               <div><dt>Drag, scroll</dt><dd>{mode === 'map' ? 'Pan, zoom' : 'Rotate, zoom'}</dd></div>
               <div><dt>F / R</dt><dd>Go to site / reset view</dd></div>
               <div><dt>M, Esc</dt><dd>Measure, stop</dd></div>
-              <div><dt>Double-click</dt><dd>Add a site there</dd></div>
+              <div><dt>Double-click</dt><dd>Select the nearest candidate site</dd></div>
               <div><dt>P</dt><dd>Play or pause the stay</dd></div>
               <div><dt>Space</dt><dd>Play or pause (Globe, Map, Pole)</dd></div>
               <div><dt>?</dt><dd>This panel</dd></div>
@@ -356,6 +400,10 @@ export function ExplorerPage() {
           <p className="dim small">A gamepad works too: left stick moves, right stick turns, triggers change height.</p>
         </div>
       )}
+
+      {caption && <div className="xp-cap" key={phase} aria-live="polite"><span>{caption.k}</span><b>{caption.t}</b></div>}
+      {intro && <LandingIntro onDone={closeIntro} onLand={landAt} onGuide={() => { setIntro(false); setGuide(true) }} />}
+      {guide && <ExplorerGuide onClose={() => setGuide(false)} onScenic={() => { setGuide(false); setTour(0) }} />}
 
       <HoverHud hover={hoverSig} source={status?.resolution ?? ''} />
       <ScaleBar engine={e} />

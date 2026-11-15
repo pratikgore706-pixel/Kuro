@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Compass, GitCompareArrows, Play } from 'lucide-react'
 import { GROUPS, SITES, fmtLat, fmtLon } from '../data/sites'
@@ -23,13 +23,13 @@ function Calendar({ r, onPick }: { r: WindowResult; onPick: (date: string) => vo
 
 export function Mission() {
   const nav = useNavigate()
-  const { mission, setMission, windows, setWindows, custom, moon, earthMarginDeg } = useStore()
+  const { mission, setMission, windows, setWindows, moon, earthMarginDeg } = useStore()
   const { selectSite, setLanding, setDays, addScenario, setEarthMargin } = useStore()
   // the margin the shown results were computed with, so changing it marks them out of date
   const [ranMargin, setRanMargin] = useState<number | null>(null)
   const [busy, setBusy] = useState<[number, number] | null>(null)
   const [err, setErr] = useState('')
-  const all = useMemo(() => [...SITES, ...custom], [custom])
+  const all = SITES
 
   const run = async () => {
     setErr('')
@@ -117,7 +117,7 @@ export function Mission() {
           </header>
           <div className="ms-axis mono dim"><span>{fmtDayShort(Date.parse(mission.windowStart))}</span><span>{fmtDayShort(Date.parse(mission.windowEnd))}</span></div>
           {sorted.map((r) => {
-            const site = findSite(r.siteId, custom)
+            const site = findSite(r.siteId)
             return (
               <article key={r.siteId} className="ms-row">
                 <div className="ms-name">

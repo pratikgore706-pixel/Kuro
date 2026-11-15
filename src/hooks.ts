@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Site } from './data/sites'
-import { computeSeries, computeSky, makeFrame, newSky, nextEvent, SPHERE_HORIZON, summarize, type Horizon } from './engine/sky'
+import { computeSeries, computeSky, freshEvent, makeFrame, newSky, nextEvent, SPHERE_HORIZON, summarize, type Horizon } from './engine/sky'
 import { DAY } from './engine/time'
 import { computeHorizon, makeSampler, type MoonData } from './explorer/moonData'
+import { storedHorizon } from './data/siteHorizons'
 import { useStore } from './store'
 
 const horizonCache = new Map<string, Horizon>()
@@ -17,7 +18,8 @@ export function horizonFor(site: { lat: number; lon: number }, data: MoonData | 
   const key = `${site.lat.toFixed(5)},${site.lon.toFixed(5)}`
   let h = horizonCache.get(key)
   if (!h) {
-    const mask = computeHorizon(s, site.lat, site.lon)
+    // the 78 candidate sites come pre-traced (identical values, see data/siteHorizons.ts); anything else is traced live
+    const mask = storedHorizon(site.lat, site.lon, data) ?? computeHorizon(s, site.lat, site.lon)
     h = { kind: 'terrain', mask, source: `Terrain horizon from ${s.describe(site.lat)}, observer 2 m above ground, out to 300 km.` }
     horizonCache.set(key, h)
   }
@@ -52,7 +54,10 @@ export function useSkyAt(site: Site, ms: number) {
 export function useEvents(site: Site, ms: number) {
   const f = useFrame(site), h = useHorizon(site), margin = useEarthMargin()
   const bucket = Math.floor(ms / 600000)
-  return useMemo(() => ({ sun: nextEvent(f, h, bucket * 600000, 'sun'), earth: nextEvent(f, h, bucket * 600000, 'earth', 60, margin) }), [f, h, bucket, margin])
+  const base = useMemo(() => ({ sun: nextEvent(f, h, bucket * 600000, 'sun'), earth: nextEvent(f, h, bucket * 600000, 'earth', 60, margin) }), [f, h, bucket, margin])
+  // an event inside the current 10-minute block may already be behind the cursor: then look again from the cursor,
+  // so the countdown never disagrees with the sky the panel shows
+  return useMemo(() => ({ sun: freshEvent(base.sun, f, h, ms, 'sun', margin), earth: freshEvent(base.earth, f, h, ms, 'earth', margin) }), [base, f, h, ms, margin])
 }
 
 export function useSize<T extends HTMLElement>() {
@@ -66,4 +71,26 @@ export function useSize<T extends HTMLElement>() {
     return () => ro.disconnect()
   }, [])
   return [ref, size] as const
+}
+
+/**
+ * Trace the terrain skyline of every candidate site in the background, a few per frame, so the page never freezes
+ * (about 35 ms each, ~2.7 s for all 78). Progress goes to the store; safe to call more than once.
+ */
+let warming: MoonData | null | undefined
+export function warmHorizons(sites: { lat: number; lon: number }[], data: MoonData | null) {
+  const setReady = useStore.getState().setHorizonsReady
+  if (!data || !makeSampler(data)) { setReady(sites.length); return } // smooth sphere: nothing to trace
+  if (warming === data) return
+  warming = data
+  let i = 0
+  const step = () => {
+    if (warming !== data) return
+    const t0 = performance.now()
+    while (i < sites.length && performance.now() - t0 < 24) horizonFor(sites[i++], data)
+    setReady(i)
+    if (i < sites.length) setTimeout(step, 0)
+  }
+  setReady(0)
+  setTimeout(step, 0)
 }

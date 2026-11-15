@@ -3,13 +3,15 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "KURO — lunar landing site × date explorer (NASA Space Apps 2026)",
+  "description": "KURO: lunar South Pole landing site and date explorer (NASA Space Apps Challenge 2026)",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "fetch:moon": "node scripts/fetch-moon-data.mjs"
+    "fetch:moon": "node scripts/fetch-moon-data.mjs && node scripts/pack-moon-data.mjs",
+    "pack:moon": "node scripts/pack-moon-data.mjs",
+    "build:horizons": "vitest run src/data/siteHorizons.test.ts"
   },
   "dependencies": {
     "@fontsource-variable/dm-sans": "^5.3.0",
@@ -36,5 +38,8 @@
     "typescript": "^7.0.2",
     "vite": "^8.3.8",
     "vitest": "^5.1.0"
+  },
+  "engines": {
+    "node": ">=20.19"
   }
 }

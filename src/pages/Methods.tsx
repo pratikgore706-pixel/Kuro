@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { SITES } from '../data/sites'
+import { GROUPS, REFERENCE_SITES, SITES } from '../data/sites'
 import { getEphemeris } from '../engine/ephemeris'
 import { checkAgainstHorizons } from '../engine/horizonsCheck'
 import { BOND_ALBEDO, EMISSIVITY, SOLAR_CONSTANT } from '../engine/thermal'
@@ -12,7 +12,7 @@ const COVERAGE = Math.round(scoreBackend({ slopeDeg: 1, roughnessM: null, summar
 export function Methods() {
   const e = getEphemeris()
   const hz = useMemo(() => { try { return e ? checkAgainstHorizons() : null } catch { return null } }, [e])
-  const name = (id: string) => SITES.find((s) => s.id === id)?.name ?? id
+  const name = (id: string) => REFERENCE_SITES.find((s) => s.id === id)?.name ?? id
   const pct = (w: number) => `${Math.round(w * 100)}%`
   return (
     <main className="prose">
@@ -87,7 +87,7 @@ export function Methods() {
       <p>By default “Earth in view” is pure geometry: Earth’s centre above the terrain horizon. A real antenna usually wants Earth a few degrees higher, clear of the ground and of multipath. The antenna margin (set in the Explorer site panel, the Compare page or the Mission planner — it is one setting) raises that threshold, and every Earth number, countdown, comparison, mission check, ranking and report uses it. The terrain shading layers in the 3D views still show plain line of sight.</p>
 
       <h2 id="ranking">Ranking and scores</h2>
-      <p>The Explorer ranks the South Pole sites — plus any site you add south of 80°S — for the exact landing date, time and stay chosen. The score out of 100 is the <b>KURO backend’s own recommendation engine</b> (<code>kuro_backend_fast</code>, version 1.0.0), ported to the browser line by line: the same thresholds, weights, rounding and order of arithmetic. The test suite runs it on {PARITY_CASES} stays that were scored by the real Python backend, including the backend’s own test cases, and fails if a single number differs, even by 0.01.</p>
+      <p>The Explorer ranks all {SITES.length} candidate sites for the exact landing date, time and stay chosen. The score out of 100 is the <b>KURO backend’s own recommendation engine</b> (<code>kuro_backend_fast</code>, version 1.0.0), ported to the browser line by line: the same thresholds, weights, rounding and order of arithmetic. The test suite runs it on {PARITY_CASES} stays that were scored by the real Python backend, including the backend’s own test cases, and fails if a single number differs, even by 0.01.</p>
       <table className="plain">
         <tbody>
           <tr><th>Flat ground · {pct(RANKING_WEIGHTS.terrain)}</th><td>Slope {pct(TERRAIN_WEIGHTS.slope)} (0° scores 100, {THRESHOLDS.terrainSlope[1]}° or more 0) and roughness {pct(TERRAIN_WEIGHTS.roughness)} (0 m RMS → 100, {THRESHOLDS.terrainRoughness[1]} m → 0). Slope is from LOLA by Horn’s method at the DEM’s own spacing (80 m in the pole core, 320 m out to 80°S).</td></tr>
@@ -100,7 +100,7 @@ export function Methods() {
       <p><b>Missing inputs are left out, never guessed.</b> Roughness needs terrain at 20–40 m per pixel and KURO’s finest is 80 m, and no structured hazard map exists yet, so — exactly like the backend — those inputs are dropped and each category is down-weighted by how much of it had data. A typical South Pole site therefore uses about {COVERAGE}% of the backend’s full input set; the site’s score breakdown says so.</p>
       <p><b>KURO’s one extra rule.</b> The backend alone still gives a site with no sunlight at all a middling score (flat, safe ground counts). KURO sets the score to 0 when there is no sunlight at all or Earth is never in view during the stay — a solar-powered lander that talks directly to Earth could neither charge nor call home — shows the reason, and still shows the backend’s own number beside it.</p>
       <p>The same score appears in the Compare table and in reports. It sorts options quickly; it is not a landing-site certification: the slope is one value at the site’s reference point, not a survey of the landing ellipse.</p>
-      <p><b>“If you land a little to the side.”</b> The site panel can recompute the same stay on a 9 × 9 grid around the site (250 m, 500 m or 1 km squares), each point with its own 300 km terrain horizon. Near the pole a few hundred metres can change sunlight by tens of per cent; clicking a square adds that spot as a site.</p>
+      <p><b>“If you land a little to the side.”</b> The site panel can recompute the same stay on a 9 × 9 grid around the site (250 m, 500 m or 1 km squares), each point with its own 300 km terrain horizon. Near the pole a few hundred metres can change sunlight by tens of per cent; the map shows it, while the ranking itself stays on the 78 candidate sites.</p>
 
       <h2>Definitions</h2>
       <ul>
@@ -112,7 +112,7 @@ export function Methods() {
       </ul>
 
       <h2>Sites</h2>
-      <p>Lander coordinates are from NASA’s NSSDCA landing-site table and LROC. South-polar entries marked as features use rounded IAU feature centres as reference points for the Artemis III candidate regions NASA named in October 2024; they are not selected landing sites. Several of them (Shackleton, Haworth) are crater centres, so their reference point sits in permanent shadow and ranks low; the rims around them are where the light is — use the nearby map to find it.</p>
+      <p>The landing choices are the problem statement’s <b>{SITES.length} candidate sites in {GROUPS.length} South Pole regions</b> ({GROUPS.join(', ')}), with the exact ids and coordinates the KURO backend’s terrain pipeline extracted them at, so every result can be matched with the backend one to one. Custom coordinates are not offered; double-clicking the Moon selects the nearest candidate. Past landers (Apollo, IM-2 Athena and others) are kept only as reference points for the accuracy checks on this page.</p>
 
       <h2>Sources and credit</h2>
       <ul>

@@ -1,7 +1,14 @@
 node_modules
 dist
-data/
+/data/
 *.tif
 *.TIF
 __pycache__
-public/moon/
+# NASA Moon data: the raw grids are large and rebuilt by `npm run fetch:moon`; the packed copies,
+# the colour map and the manifest are committed so a fresh clone (and every deployment) has real terrain
+public/moon/*.u16
+public/moon/*.i16
+*.bundle
+.tmp-preview/
+tsconfig.tsbuildinfo
+.vercel

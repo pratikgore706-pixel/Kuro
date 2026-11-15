@@ -19,6 +19,7 @@ import { computeSky, makeFrame, newSky, SPHERE_HORIZON } from '../../engine/sky'
 export type Lighting = 'sun' | 'full'
 export type ViewMode = 'globe' | 'pole' | 'drone' | 'rover' | 'surface' | 'map'
 export type MapKind = 'global' | 'pole'
+export type CinePhase = 'arrive' | 'orbit' | 'sun' | 'earth' | 'settle' | 'done'
 export interface SiteMark { id: string; name: string; lat: number; lon: number; note?: string }
 export interface HoverInfo { lat: number; lon: number; heightM: number | null; slopeDeg: number | null; source: string }
 export interface EngineStatus {
@@ -145,8 +146,8 @@ export class ExplorerEngine {
   private dest: { name: string; lat: number; lon: number; status: 'driving' | 'arrived' | 'blocked' | 'paused' } | null = null
   private picking = false
   private destMark = new THREE.Group()
-  private rover = { lat: 0, lon: 0, e: 0, n: 0, heading: 0, v: 0, dist: 0, battery: 82, cam: 'chase' as 'chase' | 'mast', lights: false, speed: 'x50' as RoverSpeed, camYaw: 0, camDist: 0.011, placed: false, blocked: null as string | null, sunFrac: 0, sunEl: 0, earthUp: false, earthEl: 0, lastSky: 0, lastSent: 0, trail: [] as THREE.Vector3[] }
-  private roverModel = buildRoverModel()
+  private rover = { lat: 0, lon: 0, e: 0, n: 0, heading: 0, v: 0, dist: 0, battery: 82, cam: 'chase' as 'chase' | 'mast', lights: false, speed: 'x50' as RoverSpeed, camYaw: 0, camPitch: 0.4, camDist: 0.011, placed: false, blocked: null as string | null, sunFrac: 0, sunEl: 0, earthUp: false, earthEl: 0, lastSky: 0, lastSent: 0, trail: [] as THREE.Vector3[] }
+  private roverModel: ReturnType<typeof buildRoverModel> = buildRoverModel()
   private roverGroup = new THREE.Group()
   private trailLine: THREE.Line
   private sunLight = new THREE.DirectionalLight(0xfff1dd, 2.6)
@@ -255,6 +256,7 @@ export class ExplorerEngine {
     el.addEventListener('pointerleave', () => { cb.onHover(null); this.hoverSite = null })
     el.addEventListener('dblclick', this.onDbl)
     el.addEventListener('wheel', this.onWheelAnchor, { passive: true })
+    el.addEventListener('wheel', () => this.wake(), { passive: true })
     el.addEventListener('wheel', (e) => { if (this.mode === 'rover' && this.rover.cam === 'chase') { this.rover.camDist = Math.max(0.006, Math.min(0.4, this.rover.camDist * (e.deltaY > 0 ? 1.12 : 0.89))); e.preventDefault() } }, { passive: false })
     // keys work wherever focus is (after pressing an on-screen button too), except while typing in a field
     window.addEventListener('keydown', this.onKey)
@@ -315,7 +317,7 @@ export class ExplorerEngine {
     if (d.global || d.pole) {
       // hand the loaded elevation to the terrain worker (no second download)
       if (this.worker) this.worker.postMessage({ init: d }); else this.mainWorker()
-      setTimeout(() => this.prefetch(['pole', 'site', 'rover']), 1500)
+      setTimeout(() => this.prefetch(this.perf.prefetch), 1500)
     }
     this.applyMode()
   }
@@ -344,6 +346,7 @@ export class ExplorerEngine {
     }).catch(() => { /* offline or blocked: the plain shaded sphere stays */ })
   }
   private applyImagery() {
+    this.wake(1500)
     const t = this.colorTex ?? this.trekTex
     this.globe.setColor(t)
     this.ctxGlobe.setColor(t)
@@ -406,6 +409,7 @@ export class ExplorerEngine {
 
   setTime(ms: number) {
     this.timeMs = ms
+    this.wake(400)
     const buf = new Float64Array(6)
     if (!sampleEphemeris(ms, buf)) return
     const sunKm = [buf[0] * AU_KM, buf[1] * AU_KM, buf[2] * AU_KM]
@@ -454,7 +458,7 @@ export class ExplorerEngine {
     this.sites = list
     const prev = this.selected?.id
     this.selected = list.find((s) => s.id === selectedId) ?? null
-    if (this.selected && this.selected.id !== prev && getMoonData()) setTimeout(() => this.prefetch(['site', 'rover']), 800)
+    if (this.selected && this.selected.id !== prev && getMoonData()) setTimeout(() => this.prefetch(this.perf.prefetch.filter((k) => k !== 'pole')), 800)
     this.buildMarks()
     if ((this.mode === 'drone' || this.mode === 'surface') && this.selected) this.ensurePatch()
   }
@@ -639,6 +643,7 @@ export class ExplorerEngine {
 
   /** Show a built square. fresh: also set up the view (camera, markers); otherwise replace the square in place. */
   private applyPatch(p: PatchResult, fresh: boolean) {
+    this.wake(2000)
     this.frame = frameAt(p.lat, p.lon)
     this.terrain.setPatch(p, this.renderer)
     this.dropDetail()
@@ -696,7 +701,7 @@ export class ExplorerEngine {
     const ex = this.mode === 'surface' || this.mode === 'map' || this.mode === 'rover' ? 1 : this.exag.terrain
     this.terrain.setExaggeration(ex); this.detail.setExaggeration(ex); this.ctxGlobe.uniforms.uExag.value = ex
     this.dropDetail()
-    this.terrain.setMeshResolution(this.mode === 'rover' ? 1024 : 768)
+    this.terrain.setMeshResolution(this.mode === 'rover' ? this.perf.roverMesh : 768)
     this.placeTerrainMarks()
     this.terrain.uniforms.uGrain.value = this.opts.micro && (this.mode === 'rover' || this.mode === 'surface' || this.mode === 'drone') ? 1 : 0
     this.placeAstronaut()
@@ -807,7 +812,7 @@ export class ExplorerEngine {
     this.paths.children.forEach((c) => (c as THREE.Line).geometry.dispose())
     this.paths.clear()
     if (!this.stay || !this.frame) return
-    const R = 3500, n = Math.min(24 * 45, Math.round(this.stay.days * 24))
+    const R = 3500, n = Math.min(24 * 45, Math.round(this.stay.days * 24)), boost = this.perf.skyScale > 1
     const sun: THREE.Vector3[] = [], earth: THREE.Vector3[] = [], sunDays: THREE.Vector3[] = [], earthDays: THREE.Vector3[] = []
     for (let i = 0; i <= n; i++) {
       const ms = this.stay.start + (i / n) * this.stay.days * 86400000
@@ -816,10 +821,10 @@ export class ExplorerEngine {
       const s = new THREE.Vector3(v[0].x, v[0].z, -v[0].y).normalize().multiplyScalar(R)
       const e = new THREE.Vector3(v[1].x, v[1].z, -v[1].y).normalize().multiplyScalar(R)
       sun.push(s); earth.push(e)
-      if (i % 24 === 0) { sunDays.push(s); earthDays.push(e) }
+      if (i % (boost ? 6 : 24) === 0) { sunDays.push(s); earthDays.push(e) }
     }
-    const line = (pts: THREE.Vector3[], color: number) => new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.7 }))
-    const dots = (pts: THREE.Vector3[], color: number) => new THREE.Points(new THREE.BufferGeometry().setFromPoints(pts), new THREE.PointsMaterial({ color, size: 6, sizeAttenuation: false }))
+    const line = (pts: THREE.Vector3[], color: number) => new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color, transparent: true, opacity: boost ? 0.95 : 0.7 }))
+    const dots = (pts: THREE.Vector3[], color: number) => new THREE.Points(new THREE.BufferGeometry().setFromPoints(pts), new THREE.PointsMaterial({ color, size: boost ? 4 : 6, sizeAttenuation: false }))
     this.paths.add(line(sun, 0xffb35c), line(earth, 0x7fb2ff), dots(sunDays, 0xffd9a8), dots(earthDays, 0xbcd6ff))
     this.pathKey = `${this.patchKey}|${this.stay.start}|${this.stay.days}`
   }
@@ -1384,6 +1389,8 @@ export class ExplorerEngine {
   private onDown = (e: PointerEvent) => {
     this.down = [e.clientX, e.clientY]
     this.fly = null
+    if (this.cine) this.stopIntro()
+    this.wake()
     if (this.mode === 'surface' || this.mode === 'rover') { this.look.drag = [e.clientX, e.clientY]; this.renderer.domElement.setPointerCapture(e.pointerId) }
   }
   private onUp = (e: PointerEvent) => {
@@ -1408,14 +1415,16 @@ export class ExplorerEngine {
     if (best) this.cb.onSelect(best)
   }
   private onMove = (e: PointerEvent) => {
+    if (this.look.drag) this.wake(600)
     if ((this.mode === 'surface' || (this.mode === 'rover' && this.rover.cam === 'mast')) && this.look.drag) {
       const [x, y] = this.look.drag
       this.look.yaw += (e.clientX - x) * 0.0032
       this.look.pitch = Math.max(-1.2, Math.min(1.45, this.look.pitch + (e.clientY - y) * 0.0032))
       this.look.drag = [e.clientX, e.clientY]
     } else if (this.mode === 'rover' && this.look.drag) {
-      const [x] = this.look.drag
+      const [x, y] = this.look.drag
       this.rover.camYaw -= (e.clientX - x) * 0.006
+      this.rover.camPitch = Math.max(0.06, Math.min(1.45, this.rover.camPitch + (e.clientY - y) * 0.005))
       this.look.drag = [e.clientX, e.clientY]
     }
     const now = performance.now()
@@ -1452,8 +1461,94 @@ export class ExplorerEngine {
     const t = e.target as HTMLElement | null
     return !!t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA' || t.isContentEditable)
   }
+  /** Swap the rover drawn in rover view (Compare uses the KURO rover). Same contract as buildRoverModel. */
+  setRoverModel(m: ReturnType<typeof buildRoverModel>) {
+    this.roverGroup.remove(this.roverModel.group)
+    this.roverModel.group.traverse((o) => { const x = o as THREE.Mesh; if (x.isMesh) { x.geometry.dispose(); for (const mt of [x.material].flat()) (mt as THREE.Material).dispose() } })
+    this.roverModel = m
+    m.group.scale.setScalar(0.001)
+    this.roverGroup.add(m.group)
+  }
+  // ---- options for pages that show several engines at once (Compare); the Explorer never calls these
+  private perf = { roverMesh: 1024, prefetch: ['pole', 'site', 'rover'] as ('pole' | 'site' | 'rover')[], frameMs: 0, visMs: 90, idleMs: 0, skyScale: 1 }
+  private awakeUntil = 0
+  /** Draw at full rate for a while (something changed); with idleMs set, the engine otherwise ticks slowly. */
+  wake(ms = 1200) { this.awakeUntil = Math.max(this.awakeUntil, performance.now() + ms) }
+  private paused = false
+  private lastFrame = 0
+  /** Lighter rendering: pixel ratio, rover terrain mesh, which squares to pre-build, frame-rate cap, shadow refresh. */
+  setPerformance(o: { pixelRatio?: number; roverMesh?: number; prefetch?: ('pole' | 'site' | 'rover')[]; maxFps?: number; visMs?: number; idleFps?: number; skyScale?: number }) {
+    if (o.idleFps !== undefined) this.perf.idleMs = o.idleFps > 0 ? 1000 / o.idleFps : 0
+    if (o.skyScale) { this.perf.skyScale = o.skyScale; this.pathKey = '' }
+    this.wake()
+    if (o.pixelRatio && o.pixelRatio !== this.renderer.getPixelRatio()) { this.renderer.setPixelRatio(o.pixelRatio); this.resize() }
+    if (o.roverMesh) this.perf.roverMesh = o.roverMesh
+    if (o.prefetch) this.perf.prefetch = o.prefetch
+    if (o.maxFps !== undefined) this.perf.frameMs = o.maxFps > 0 ? 1000 / o.maxFps : 0
+    if (o.visMs) this.perf.visMs = o.visMs
+  }
+  /** Stop drawing entirely (the view is hidden or covered) and resume. */
+  setPaused(p: boolean) {
+    if (p === this.paused) return
+    this.paused = p
+    if (p) cancelAnimationFrame(this.raf); else { this.clock.update(); this.loop() }
+  }
+  /** On-screen drive control, the same as holding W A S D: throttle −1…1 (forward +), steer −1…1 (right +). */
+  setVirtualDrive(throttle: number, steer: number) { this.input.virtual.y = -throttle; this.input.virtual.x = steer; this.wake() }
+  /** Turn the rover camera around the rover (chase) or the mast camera's gaze (mast), radians. */
+  roverOrbit(d: number) { this.wake(); if (this.rover.cam === 'mast') this.look.yaw -= d; else this.rover.camYaw += d }
+  /** Chase camera closer (<1) or further (>1). */
+  roverZoom(f: number) { this.wake(); this.rover.camDist = Math.max(0.006, Math.min(0.4, this.rover.camDist * f)) }
+  roverCam(): 'chase' | 'mast' { return this.rover.cam }
+
+  // ---- cinematic introduction: swoop in, circle the rover, look at the Sun, then Earth, then settle behind it
+  private cine: { t0: number; onPhase?: (p: CinePhase) => void; last: CinePhase | '' ; from: THREE.Vector3; look: THREE.Vector3 } | null = null
+  static CINE = { arrive: 2.6, orbit: 4.4, sun: 3.6, earth: 3.6, settle: 1.8 }
+  roverIntro(onPhase?: (p: CinePhase) => void) {
+    this.wake()
+    this.cine = { t0: 0, onPhase, last: '', from: new THREE.Vector3(), look: new THREE.Vector3() }
+    if (this.rover.cam === 'mast') this.rover.cam = 'chase'
+  }
+  stopIntro() { if (this.cine) { const f = this.cine.onPhase; this.cine = null; f?.('done') } }
+  private cineCamera(): boolean {
+    const c = this.cine
+    if (!c || !this.terrain.patch || !this.rover.placed) return false
+    const now = performance.now()
+    if (!c.t0) c.t0 = now
+    const T = ExplorerEngine.CINE, r = this.rover, cam = this.terrCam
+    const base = this.roverGroup.position.clone().add(new THREE.Vector3(0, 0.0011, 0))
+    const yaw0 = r.heading + r.camYaw
+    const around = (yaw: number, dist: number, h: number) => base.clone().add(new THREE.Vector3(-Math.sin(yaw) * dist, h, Math.cos(yaw) * dist))
+    // a camera spot behind the rover as seen from a direction, so the rover sits in front of the Sun or Earth
+    const facing = (dir: THREE.Vector3) => { const hz = new THREE.Vector3(dir.x, 0, dir.z); if (hz.lengthSq() < 1e-9) hz.set(0, 0, -1); hz.normalize(); return base.clone().addScaledVector(hz, -0.011).add(new THREE.Vector3(0, 0.0032, 0)) }
+    let t = (now - c.t0) / 1000, phase: CinePhase = 'arrive', k = 0
+    for (const p of ['arrive', 'orbit', 'sun', 'earth', 'settle'] as const) { if (t <= T[p]) { phase = p; k = t / T[p]; break } t -= T[p]; phase = 'done' }
+    if (phase !== c.last) { c.last = phase; c.from.copy(cam.position); c.onPhase?.(phase) }
+    if (phase === 'done') { this.cine = null; return false }
+    const e = ease(Math.min(1, k))
+    let pos: THREE.Vector3, look = base.clone()
+    if (phase === 'arrive') { pos = around(yaw0 - (1 - e) * 1.4, 0.09 + (0.013 - 0.09) * e, 0.07 + (0.0045 - 0.07) * e) }
+    else if (phase === 'orbit') { pos = around(yaw0 + k * Math.PI * 2, 0.013, 0.0045 + Math.sin(k * Math.PI) * 0.003) }
+    else if (phase === 'sun' || phase === 'earth') {
+      const dir = (phase === 'sun' ? this.sunDirScene : this.earthDirScene).clone().normalize()
+      pos = c.from.clone().lerp(facing(dir), Math.min(1, e * 1.6))
+      look = base.clone().lerp(base.clone().addScaledVector(dir, 0.06), Math.min(1, ease(Math.min(1, k * 1.5))))
+    } else {
+      const back = new THREE.Vector3(-Math.sin(yaw0), 0, Math.cos(yaw0))
+      pos = c.from.clone().lerp(base.clone().addScaledVector(back, r.camDist * Math.cos(r.camPitch)).add(new THREE.Vector3(0, r.camDist * Math.sin(r.camPitch), 0)), e)
+      look = c.look.clone().lerp(base, e)
+    }
+    const g = this.terrain.surfaceY(pos.x * 1000, -pos.z * 1000) + 0.0015
+    if (pos.y < g) pos.y = g
+    cam.position.copy(pos); cam.lookAt(look)
+    if (phase !== 'settle') c.look.copy(look)
+    return true
+  }
+
+  /** False while another engine on the same page owns the keyboard (Compare shows several views at once). */
+  keysEnabled = true
   private onKey = (e: KeyboardEvent) => {
-    if (this.typing(e) || e.ctrlKey || e.metaKey || e.altKey) return
+    if (!this.keysEnabled || this.typing(e) || e.ctrlKey || e.metaKey || e.altKey) return
     const k = e.key.toLowerCase()
     if (ExplorerEngine.MOVE_KEYS.includes(k)) {
       this.input.keys.add(k)
@@ -1475,7 +1570,7 @@ export class ExplorerEngine {
     if (k === ' ' && !this.typing(e)) e.preventDefault()
   }
   private onBlur = () => this.input.keys.clear()
-  private onVisibility = () => { if (document.hidden) cancelAnimationFrame(this.raf); else { this.clock.update(); this.loop() } }
+  private onVisibility = () => { if (document.hidden) cancelAnimationFrame(this.raf); else if (!this.paused) { this.clock.update(); this.loop() } }
 
   private move(dt: number) {
     const a = this.input.read()
@@ -1537,6 +1632,7 @@ export class ExplorerEngine {
 
   roverAction(cmd: 'cam' | 'lights' | 'reset' | 'speed', value?: RoverSpeed) {
     const r = this.rover
+    this.wake()
     if (cmd === 'cam') { r.cam = r.cam === 'chase' ? 'mast' : 'chase'; this.look.yaw = 0; this.look.pitch = -0.08 }
     if (cmd === 'lights') r.lights = !r.lights
     if (cmd === 'speed' && value) r.speed = value
@@ -1686,6 +1782,7 @@ export class ExplorerEngine {
   }
 
   private roverCamera(dt: number) {
+    if (this.cineCamera()) return
     const r = this.rover, cam = this.terrCam
     const base = this.roverGroup.position
     if (r.cam === 'mast') {
@@ -1696,10 +1793,10 @@ export class ExplorerEngine {
       return
     }
     const back = new THREE.Vector3(-Math.sin(r.heading + r.camYaw), 0, Math.cos(r.heading + r.camYaw))
-    const want = base.clone().addScaledVector(back, r.camDist).add(new THREE.Vector3(0, r.camDist * 0.42, 0))
+    const want = base.clone().addScaledVector(back, r.camDist * Math.cos(r.camPitch)).add(new THREE.Vector3(0, r.camDist * Math.sin(r.camPitch), 0))
     const g = this.terrain.surfaceY(want.x * 1000, -want.z * 1000) + 0.0015
     if (want.y < g) want.y = g
-    cam.position.lerp(want, Math.min(1, dt * 4))
+    cam.position.lerp(want, Math.min(1, dt * (this.look.drag ? 14 : 4)))
     cam.lookAt(base.clone().add(new THREE.Vector3(0, 0.0012, 0)))
   }
 
@@ -1737,9 +1834,20 @@ export class ExplorerEngine {
   }
 
   private loop = () => {
-    if (this.disposed) return
+    if (this.disposed || this.paused) return
     cancelAnimationFrame(this.raf)
     this.raf = requestAnimationFrame(this.loop)
+    {
+      const t = performance.now()
+      let ms = this.perf.frameMs
+      if (this.perf.idleMs) {
+        const v = this.input.virtual
+        const busy = t < this.awakeUntil || !!this.cine || !!this.fly || !!this.look.drag || Math.abs(this.rover.v) > 1e-3 || this.input.keys.size > 0 || v.x !== 0 || v.y !== 0 || this.visDirty || this.terrain.stayPending
+        if (!busy) ms = this.perf.idleMs
+      }
+      if (ms && t - this.lastFrame < ms - 2) return
+      this.lastFrame = t
+    }
     this.clock.update()
     const dt = Math.min(0.1, this.clock.getDelta())
     if (this.status.blocked) { this.renderer.clear(); return }
@@ -1773,7 +1881,7 @@ export class ExplorerEngine {
         this.terrCam.fov = 62; this.terrCam.updateProjectionMatrix()
       } else if (this.terrCam.fov !== 55) { this.terrCam.fov = 55; this.terrCam.updateProjectionMatrix() }
       const now = performance.now()
-      if (this.visDirty && now - this.lastVisAt > 90) {
+      if (this.visDirty && now - this.lastVisAt > this.perf.visMs) {
         const v = this.localVectors(this.timeMs)
         if (v) {
           this.terrain.computeVisibility(this.renderer, v[0], v[1])
@@ -1789,7 +1897,7 @@ export class ExplorerEngine {
       this.updateContextGlobe()
       if (now - this.lodAt > 350) { this.lodAt = now; this.updateLod(); this.updateImagery() }
       this.sky.group.visible = this.mode === 'drone' || this.mode === 'surface' || this.mode === 'pole' || this.mode === 'rover'
-      this.sky.update(this.terrCam, this.sunDirScene, this.earthDirScene, this.sunR, this.earthR)
+      this.sky.update(this.terrCam, this.sunDirScene, this.earthDirScene, this.sunR * this.perf.skyScale, this.earthR * this.perf.skyScale)
       this.terrMarks.visible = this.mode !== 'surface' && this.mode !== 'rover'
       this.scaleMarks()
     }

@@ -42,7 +42,7 @@ const Ground = memo(function Ground({ horizon, s }: { horizon: Horizon; s: Scale
     <g>
       <defs>
         <linearGradient id="hs-ground" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stopColor="#1a2240" /><stop offset="1" stopColor="#0b1022" />
+          <stop offset="0" style={{ stopColor: 'var(--hs-g1, #1b1f24)' }} /><stop offset="1" style={{ stopColor: 'var(--hs-g2, #0b0d10)' }} />
         </linearGradient>
       </defs>
       <path d={d} fill="url(#hs-ground)" />

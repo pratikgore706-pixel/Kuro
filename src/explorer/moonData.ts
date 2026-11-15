@@ -30,6 +30,39 @@ async function bin(url: string): Promise<ArrayBuffer | null> {
   try { const r = await fetch(url); return r.ok ? await r.arrayBuffer() : null } catch { return null }
 }
 
+/**
+ * Reverses scripts/pack-moon-data.mjs: gunzip, join the low and high byte planes, then add up each row's
+ * differences. Lossless — every height is exactly the original value. Returns the raw little-endian grid bytes.
+ */
+export async function unpackGrid(packed: ArrayBuffer, width: number, height: number): Promise<ArrayBuffer | null> {
+  try {
+    const stream = new Blob([packed]).stream().pipeThrough(new DecompressionStream('gzip'))
+    const planes = new Uint8Array(await new Response(stream).arrayBuffer())
+    const n = width * height
+    if (planes.length !== n * 2) return null
+    const out = new Uint16Array(n)
+    for (let y = 0; y < height; y++) {
+      let acc = 0
+      for (let i = y * width, end = i + width; i < end; i++) {
+        acc = (acc + (planes[i] | (planes[n + i] << 8))) & 0xffff
+        out[i] = acc
+      }
+    }
+    return out.buffer
+  } catch { return null }
+}
+
+/** One elevation grid: the packed file when the manifest lists one and the browser can unpack it, else the raw file. */
+async function grid(base: string, d: { file: string; width: number; height: number; packed?: { file: string } } | undefined): Promise<ArrayBuffer | null> {
+  if (!d) return null
+  if (d.packed && typeof DecompressionStream !== 'undefined') {
+    const p = await bin(`${base}moon/${d.packed.file}`)
+    const raw = p ? await unpackGrid(p, d.width, d.height) : null
+    if (raw) return raw
+  }
+  return bin(`${base}moon/${d.file}`)
+}
+
 export function loadMoonData(base = import.meta.env.BASE_URL): Promise<MoonData> {
   if (pending) return pending
   pending = (async () => {
@@ -42,11 +75,7 @@ export function loadMoonData(base = import.meta.env.BASE_URL): Promise<MoonData>
     const out: MoonData = { ...EMPTY, missing: [] }
     if (m.color) { out.colorUrl = `${base}moon/${m.color.file}`; out.colorSource = m.color.source } else out.missing.push('colour map')
     // all elevation files download at the same time (they used to queue one after another)
-    const [gb, pb, hb] = await Promise.all([
-      m.global ? bin(`${base}moon/${m.global.file}`) : Promise.resolve(null),
-      m.pole ? bin(`${base}moon/${m.pole.file}`) : Promise.resolve(null),
-      m.poleHi ? bin(`${base}moon/${m.poleHi.file}`) : Promise.resolve(null),
-    ])
+    const [gb, pb, hb] = await Promise.all([grid(base, m.global), grid(base, m.pole), grid(base, m.poleHi)])
     if (m.global && gb && gb.byteLength === m.global.width * m.global.height * 2) out.global = { width: m.global.width, height: m.global.height, data: new Uint16Array(gb), minM: m.global.minM, maxM: m.global.maxM, source: m.global.source, pixelDeg: m.global.pixelDeg }
     if (!out.global) out.missing.push('global elevation')
     for (const [k, b] of [['pole', pb], ['poleHi', hb]] as const) {
