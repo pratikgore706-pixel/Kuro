@@ -4,6 +4,9 @@ import { DAY, startOfUtcDay } from './engine/time'
 import type { MoonData } from './explorer/moonData'
 import type { MissionRequirements, WindowResult } from './services/api'
 
+/** Antenna margins offered in the UI: how far above the terrain horizon Earth must be to count as "in view", degrees. */
+export const EARTH_MARGINS = [0, 1, 2, 3, 5, 8, 10]
+
 export interface Scenario { id: string; siteId: string; landingMs: number; days: number }
 
 interface State {
@@ -19,7 +22,7 @@ interface State {
   range: [number, number]
   custom: Site[]
   siteId: string
-  /** Start of the mission window (the landing date), UTC ms. */
+  /** Landing instant (date and time, to the minute), UTC ms — the start of the stay. */
   landingMs: number
   /** Surface mission length in Earth days. */
   days: number
@@ -28,7 +31,16 @@ interface State {
   playing: boolean
   /** Simulated hours per real second. */
   speed: number
+  /** Start the stay again from landing when playback reaches the end. */
+  loop: boolean
+  setLoop: (l: boolean) => void
   scenarios: Scenario[]
+  /**
+   * How far Earth's centre must clear the local (terrain) horizon before it counts as "in view", degrees.
+   * 0 = pure line of sight; real antennas usually want a few degrees. Applies to every Earth number in the app.
+   */
+  earthMarginDeg: number
+  setEarthMargin: (deg: number) => void
   setReady: (range: [number, number]) => void
   setError: (e: string) => void
   selectSite: (id: string) => void
@@ -45,6 +57,7 @@ interface State {
 }
 
 const today = startOfUtcDay(Date.now())
+const roundToMinute = (ms: number) => Math.round(ms / 60000) * 60000
 let counter = 0
 const uid = () => `s${Date.now().toString(36)}${counter++}`
 const KEY = 'kuro.v1'
@@ -54,11 +67,12 @@ function restore(): Partial<State> {
     const raw = localStorage.getItem(KEY)
     if (!raw) return {}
     const v = JSON.parse(raw)
-    return { custom: Array.isArray(v.custom) ? v.custom : [], scenarios: Array.isArray(v.scenarios) ? v.scenarios : undefined, mission: v.mission && typeof v.mission === 'object' ? v.mission : undefined }
+    const margin = Number(v.earthMarginDeg)
+    return { custom: Array.isArray(v.custom) ? v.custom : [], scenarios: Array.isArray(v.scenarios) ? v.scenarios : undefined, mission: v.mission && typeof v.mission === 'object' ? v.mission : undefined, earthMarginDeg: isFinite(margin) && margin >= 0 && margin <= 20 ? margin : undefined }
   } catch { return {} }
 }
 function persist(s: State) {
-  try { localStorage.setItem(KEY, JSON.stringify({ custom: s.custom, scenarios: s.scenarios, mission: s.mission })) } catch { /* storage unavailable */ }
+  try { localStorage.setItem(KEY, JSON.stringify({ custom: s.custom, scenarios: s.scenarios, mission: s.mission, earthMarginDeg: s.earthMarginDeg })) } catch { /* storage unavailable */ }
 }
 
 const saved = restore()
@@ -84,11 +98,15 @@ export const useStore = create<State>((set, get) => ({
   cursorMs: Date.now(),
   playing: false,
   speed: 6,
+  loop: false,
+  setLoop: (loop) => set({ loop }),
   scenarios: saved.scenarios ?? [
     { id: uid(), siteId: 'im2', landingMs: today, days: 14 },
     { id: uid(), siteId: 'im2', landingMs: today + 14 * DAY, days: 14 },
     { id: uid(), siteId: 'malapert', landingMs: today, days: 14 },
   ],
+  earthMarginDeg: saved.earthMarginDeg ?? 0,
+  setEarthMargin: (deg) => { set({ earthMarginDeg: Math.max(0, Math.min(20, deg)) }); persist(get()) },
   setReady: (range) => set({ ready: true, range }),
   setError: (error) => set({ error }),
   selectSite: (siteId) => set({ siteId }),
@@ -101,8 +119,10 @@ export const useStore = create<State>((set, get) => ({
     return id
   },
   setLanding: (ms) => {
+    if (!isFinite(ms)) return
     const [a, b] = get().range
-    const landingMs = Math.min(Math.max(startOfUtcDay(ms), a), b - get().days * DAY)
+    // keep the time of day (to the minute): "landing at 14:30 UTC" is a different stay from midnight
+    const landingMs = Math.min(Math.max(roundToMinute(ms), a), b - get().days * DAY)
     set({ landingMs, cursorMs: landingMs, playing: false })
   },
   setDays: (days) => set((s) => ({ days, cursorMs: Math.min(s.cursorMs, s.landingMs + days * DAY) })),
@@ -112,7 +132,8 @@ export const useStore = create<State>((set, get) => ({
   tick: (dtReal) => set((s) => {
     const end = s.landingMs + s.days * DAY
     const next = s.cursorMs + dtReal * s.speed * 3600
-    return next >= end ? { cursorMs: end, playing: false } : { cursorMs: next }
+    if (next < end) return { cursorMs: next }
+    return s.loop ? { cursorMs: s.landingMs } : { cursorMs: end, playing: false }
   }),
   addScenario: (p) => { set((s) => ({ scenarios: [...s.scenarios, { id: uid(), siteId: s.siteId, landingMs: s.landingMs, days: s.days, ...p }].slice(0, 6) })); persist(get()) },
   updateScenario: (id, patch) => { set((s) => ({ scenarios: s.scenarios.map((x) => (x.id === id ? { ...x, ...patch } : x)) })); persist(get()) },

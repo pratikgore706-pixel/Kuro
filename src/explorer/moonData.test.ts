@@ -16,7 +16,7 @@ describe('south polar stereographic', () => {
 })
 
 describe('terrain horizon', () => {
-  const flat: Sampler = { height: () => 0, resolution: () => 500, describe: () => 'flat test sphere' }
+  const flat: Sampler = { height: () => 0, heightVec: () => 0, resolution: () => 500, describe: () => 'flat test sphere' }
   it('on a smooth sphere the horizon sits just below 0° (curvature + 2 m eye)', () => {
     const m = computeHorizon(flat, -60, 20, 2, 36, 300)
     for (const v of m) { expect(v).toBeLessThan(0); expect(v).toBeGreaterThan(-0.2) }

@@ -31,25 +31,28 @@ export function useHorizon(site: Site): Horizon {
 
 export const useFrame = (site: Site) => useMemo(() => makeFrame(site.lat, site.lon), [site.lat, site.lon])
 
+/** The antenna margin every Earth-visibility number uses (degrees above the terrain horizon). */
+export const useEarthMargin = () => useStore((s) => s.earthMarginDeg)
+
 export function useSeries(site: Site, landingMs: number, days: number, samples = 960) {
-  const f = useFrame(site), h = useHorizon(site)
+  const f = useFrame(site), h = useHorizon(site), margin = useEarthMargin()
   return useMemo(() => {
     const n = Math.max(120, Math.min(samples, Math.round(days * 96)))
-    const series = computeSeries(f, h, landingMs, (days * DAY) / (n - 1), n)
+    const series = computeSeries(f, h, landingMs, (days * DAY) / (n - 1), n, margin)
     return { series, summary: summarize(series) }
-  }, [f, h, landingMs, days, samples])
+  }, [f, h, landingMs, days, samples, margin])
 }
 
 export function useSkyAt(site: Site, ms: number) {
-  const f = useFrame(site), h = useHorizon(site)
-  return useMemo(() => computeSky(f, h, ms, newSky()), [f, h, ms])
+  const f = useFrame(site), h = useHorizon(site), margin = useEarthMargin()
+  return useMemo(() => computeSky(f, h, ms, newSky(), margin), [f, h, ms, margin])
 }
 
 /** Next Sun / Earth visibility change. Recomputed at most once per simulated 10 minutes. */
 export function useEvents(site: Site, ms: number) {
-  const f = useFrame(site), h = useHorizon(site)
+  const f = useFrame(site), h = useHorizon(site), margin = useEarthMargin()
   const bucket = Math.floor(ms / 600000)
-  return useMemo(() => ({ sun: nextEvent(f, h, bucket * 600000, 'sun'), earth: nextEvent(f, h, bucket * 600000, 'earth') }), [f, h, bucket])
+  return useMemo(() => ({ sun: nextEvent(f, h, bucket * 600000, 'sun'), earth: nextEvent(f, h, bucket * 600000, 'earth', 60, margin) }), [f, h, bucket, margin])
 }
 
 export function useSize<T extends HTMLElement>() {

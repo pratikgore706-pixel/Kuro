@@ -4,7 +4,7 @@ import { Compass, GitCompareArrows, Play } from 'lucide-react'
 import { GROUPS, SITES, fmtLat, fmtLon } from '../data/sites'
 import { DAY, fmtDayShort, fmtHours } from '../engine/time'
 import { dataSourceLabel, findWindows, type Check, type WindowResult } from '../services/api'
-import { findSite, useStore } from '../store'
+import { EARTH_MARGINS, findSite, useStore } from '../store'
 
 const CHECK_LABEL: Record<Check, string> = { sun: 'too little sunlight', dark: 'darkness too long', earth: 'Earth in view too little', gap: 'radio gap too long' }
 const CHECK_COLOR: Record<Check, string> = { sun: '#f4a259', dark: '#8b5cf6', earth: '#6fa8ff', gap: '#e8577a' }
@@ -23,8 +23,10 @@ function Calendar({ r, onPick }: { r: WindowResult; onPick: (date: string) => vo
 
 export function Mission() {
   const nav = useNavigate()
-  const { mission, setMission, windows, setWindows, custom, moon } = useStore()
-  const { selectSite, setLanding, setDays, addScenario } = useStore()
+  const { mission, setMission, windows, setWindows, custom, moon, earthMarginDeg } = useStore()
+  const { selectSite, setLanding, setDays, addScenario, setEarthMargin } = useStore()
+  // the margin the shown results were computed with, so changing it marks them out of date
+  const [ranMargin, setRanMargin] = useState<number | null>(null)
   const [busy, setBusy] = useState<[number, number] | null>(null)
   const [err, setErr] = useState('')
   const all = useMemo(() => [...SITES, ...custom], [custom])
@@ -34,7 +36,7 @@ export function Mission() {
     if (Date.parse(mission.windowEnd) < Date.parse(mission.windowStart)) { setErr('The last landing date is before the first one.'); return }
     if (!mission.siteIds.length) { setErr('Choose at least one site.'); return }
     setBusy([0, mission.siteIds.length])
-    try { setWindows(await findWindows(mission, all, (d, t) => setBusy([d, t]))) }
+    try { setWindows(await findWindows(mission, all, (d, t) => setBusy([d, t]), earthMarginDeg)); setRanMargin(earthMarginDeg) }
     catch (e) { setErr((e as Error).message) }
     finally { setBusy(null) }
   }
@@ -79,6 +81,9 @@ export function Mission() {
             <label className="req dark"><span>Darkness no longer than <b className="mono">{fmtHours(mission.maxDarkHours)}</b></span><input type="range" min={6} max={360} step={6} value={mission.maxDarkHours} onChange={(e) => setMission({ maxDarkHours: Number(e.target.value) })} /><small>Longest stretch the batteries and heaters must carry the lander.</small></label>
             <label className="req earth"><span>Earth in view at least <b className="mono">{mission.minEarthPct}%</b></span><input type="range" min={0} max={100} step={5} value={mission.minEarthPct} onChange={(e) => setMission({ minEarthPct: Number(e.target.value) })} /><small>Share of the stay with a direct line of sight for radio.</small></label>
             <label className="req gap"><span>Radio gap no longer than <b className="mono">{fmtHours(mission.maxGapHours)}</b></span><input type="range" min={6} max={360} step={6} value={mission.maxGapHours} onChange={(e) => setMission({ maxGapHours: Number(e.target.value) })} /><small>Longest time without a direct link to Earth.</small></label>
+            <label className="req earth"><span>Antenna margin <b className="mono">{earthMarginDeg}°</b></span>
+              <select value={earthMarginDeg} onChange={(e) => setEarthMargin(Number(e.target.value))}>{EARTH_MARGINS.map((m) => <option key={m} value={m}>{m}° above the hills</option>)}</select>
+              <small>Earth only counts as in view once it is this high above the terrain horizon. Same setting as the Explorer.</small></label>
           </div>
         </div>
         <div className="ms-sites">
@@ -104,6 +109,7 @@ export function Mission() {
         <section className="ms-results">
           <header>
             <h2>{sorted.reduce((a, r) => a + r.passCount, 0)} workable landings across {sorted.length} sites</h2>
+            {ranMargin !== null && ranMargin !== earthMarginDeg && <p className="err small" role="status">The antenna margin changed to {earthMarginDeg}° — press the button above to check again.</p>}
             <ul className="ms-key" aria-label="Legend">
               <li><i style={{ background: '#5ec8b0' }} /> Meets every requirement</li>
               {(Object.keys(CHECK_LABEL) as Check[]).map((c) => <li key={c}><i style={{ background: CHECK_COLOR[c] }} /> Fails: {CHECK_LABEL[c]}</li>)}

@@ -1,4 +1,6 @@
+import { summarizeStatuses, type BackendSummary, type Status } from '../services/backendScore'
 import { sampleEphemeris } from './ephemeris'
+import { equilibriumK, SOLAR_CONSTANT } from './thermal'
 import { DAY, HOUR } from './time'
 
 export const R_MOON_KM = 1737.4 // LOLA reference sphere
@@ -86,18 +88,21 @@ export interface Series {
   startMs: number; stepMs: number; n: number
   sunEl: Float32Array; sunAz: Float32Array; sunFrac: Float32Array
   earthEl: Float32Array; earthAz: Float32Array; earthUp: Uint8Array
+  /** 1 when the centre of the Sun clears the horizon — the KURO backend's VISIBLE test for the Sun. */
+  sunVis: Uint8Array
   /** False if any sample fell outside the ephemeris table. */
   complete: boolean
 }
 
 export function computeSeries(f: SiteFrame, h: Horizon, startMs: number, stepMs: number, n: number, earthMarginDeg = 0): Series {
-  const s: Series = { startMs, stepMs, n, sunEl: new Float32Array(n), sunAz: new Float32Array(n), sunFrac: new Float32Array(n), earthEl: new Float32Array(n), earthAz: new Float32Array(n), earthUp: new Uint8Array(n), complete: true }
+  const s: Series = { startMs, stepMs, n, sunEl: new Float32Array(n), sunAz: new Float32Array(n), sunFrac: new Float32Array(n), earthEl: new Float32Array(n), earthAz: new Float32Array(n), earthUp: new Uint8Array(n), sunVis: new Uint8Array(n), complete: true }
   const k = newSky()
   for (let i = 0; i < n; i++) {
     computeSky(f, h, startMs + i * stepMs, k, earthMarginDeg)
     if (!k.ok) { s.complete = false; s.sunEl[i] = s.earthEl[i] = NaN; continue }
     s.sunEl[i] = k.sunEl; s.sunAz[i] = k.sunAz; s.sunFrac[i] = k.sunFrac
     s.earthEl[i] = k.earthEl; s.earthAz[i] = k.earthAz; s.earthUp[i] = k.earthUp ? 1 : 0
+    s.sunVis[i] = k.sunClear > 0 ? 1 : 0
   }
   return s
 }
@@ -114,21 +119,41 @@ export interface Summary {
   commWindows: number
   /** Share of time with both sunlight and line of sight to Earth. */
   bothPct: number
+  /**
+   * Warmest level ground during the stay, kelvin — radiative-balance estimate at the moment of most sunlight
+   * (see engine/thermal.ts). 0 when the site never sees the Sun.
+   */
+  peakGroundK: number
+  /** The same stay as the KURO backend's mission analysis sees it (Sun centre visible / Earth visible per sample). */
+  backend: BackendSummary
+}
+
+/** The backend's per-sample classification of a series: incomplete samples (outside the table) are UNCERTAIN. */
+export function seriesStatuses(s: Series): { sun: Status[]; earth: Status[] } {
+  const sun: Status[] = new Array(s.n), earth: Status[] = new Array(s.n)
+  for (let i = 0; i < s.n; i++) {
+    const ok = !isNaN(s.sunEl[i])
+    sun[i] = ok ? (s.sunVis[i] ? 'V' : 'B') : 'U'
+    earth[i] = ok ? (s.earthUp[i] ? 'V' : 'B') : 'U'
+  }
+  return { sun, earth }
 }
 
 export function summarize(s: Series): Summary {
-  let sun = 0, any = 0, earth = 0, both = 0, peak = -90, dark = 0, maxDark = 0, out = 0, maxOut = 0, windows = 0, prevUp = 0
+  let sun = 0, any = 0, earth = 0, both = 0, peak = -90, dark = 0, maxDark = 0, out = 0, maxOut = 0, windows = 0, prevUp = 0, maxGround = 0
   for (let i = 0; i < s.n; i++) {
     const fr = s.sunFrac[i], up = s.earthUp[i]
     sun += fr; if (fr > 0) any++; earth += up; if (fr > 0 && up) both++
     if (s.sunEl[i] > peak) peak = s.sunEl[i]
+    if (fr > 0 && s.sunEl[i] > 0) { const g = fr * Math.sin(s.sunEl[i] / DEG); if (g > maxGround) maxGround = g }
     if (fr > 0) dark = 0; else { dark++; if (dark > maxDark) maxDark = dark }
     if (up) out = 0; else { out++; if (out > maxOut) maxOut = out }
     if (up && !prevUp) windows++
     prevUp = up
   }
   const hStep = s.stepMs / HOUR
-  return { sunPct: (100 * sun) / s.n, sunAnyPct: (100 * any) / s.n, peakSunEl: peak, longestDarkH: maxDark * hStep, earthPct: (100 * earth) / s.n, longestOutageH: maxOut * hStep, commWindows: windows, bothPct: (100 * both) / s.n }
+  const st = seriesStatuses(s)
+  return { sunPct: (100 * sun) / s.n, sunAnyPct: (100 * any) / s.n, peakSunEl: peak, longestDarkH: maxDark * hStep, earthPct: (100 * earth) / s.n, longestOutageH: maxOut * hStep, commWindows: windows, bothPct: (100 * both) / s.n, peakGroundK: equilibriumK(SOLAR_CONSTANT * maxGround), backend: summarizeStatuses(st.sun, st.earth, s.stepMs / 1000) }
 }
 
 export interface SkyEvent { ms: number; type: 'rise' | 'set' }

@@ -58,12 +58,17 @@ export interface RoverTelemetry {
   speedMps: number; timeScale: number; distM: number
   sunFrac: number; sunEl: number; earthUp: boolean; earthEl: number
   battery: number; blocked: string | null; cam: 'chase' | 'mast'; lights: boolean
+  /** Autopilot target, when driving to a destination. */
+  dest: { name: string; lat: number; lon: number; distM: number; bearingDeg: number; etaS: number; status: 'driving' | 'arrived' | 'blocked' | 'paused' } | null
+  /** Waiting for a click on the ground to set the destination. */
+  picking: boolean
 }
 
 export const ROVER_SPEEDS = [
   { id: 'real', label: 'Real speed (0.2 m/s)', mps: 0.2, scale: 1 },
   { id: 'x50', label: 'Time-lapse ×50', mps: 0.2, scale: 50 },
   { id: 'x500', label: 'Time-lapse ×500', mps: 0.2, scale: 500 },
+  { id: 'x2000', label: 'Time-lapse ×2000', mps: 0.2, scale: 2000 },
 ] as const
 export type RoverSpeed = (typeof ROVER_SPEEDS)[number]['id']
 

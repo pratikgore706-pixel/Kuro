@@ -1,6 +1,7 @@
-import { memo, useMemo, useRef } from 'react'
-import type { Series } from '../engine/sky'
-import { DAY, HOUR, fmtDayShort } from '../engine/time'
+import { memo, useMemo, useRef, useState } from 'react'
+import { horizonAt, type Horizon, type Series, type Sky } from '../engine/sky'
+import { equilibriumK, fmtC, sunOnGround, sunOnPanel } from '../engine/thermal'
+import { DAY, HOUR, fmtDayShort, fmtDuration, fmtUtc } from '../engine/time'
 import { useSize } from '../hooks'
 
 /** Merge consecutive samples that share a state into [startIndex, endIndex, state] runs. */
@@ -17,16 +18,20 @@ export const sunState = (s: Series) => (i: number) => (s.sunFrac[i] >= 0.999 ? 2
 
 const L = 56, R = 10
 
-const Plot = memo(function Plot({ series, w, h }: { series: Series; w: number; h: number }) {
+/** Vertical layout of the plot: the two bands on top, the elevation curves below. */
+const BAND = 11, Y1 = 2, Y2 = Y1 + BAND + 4, TOP = Y2 + BAND + 8
+
+function elevRange(series: Series) {
+  let lo = 0, hi = 0
+  for (let i = 0; i < series.n; i++) { lo = Math.min(lo, series.sunEl[i], series.earthEl[i]); hi = Math.max(hi, series.sunEl[i], series.earthEl[i]) }
+  const pad = Math.max(1, (hi - lo) * 0.08)
+  return { lo: lo - pad, hi: Math.min(90, hi + pad) }
+}
+
+const Plot = memo(function Plot({ series, w, h, lo, hi }: { series: Series; w: number; h: number; lo: number; hi: number }) {
   const iw = w - L - R
   const X = (i: number) => L + (i / (series.n - 1)) * iw
-  const band = 11, y1 = 2, y2 = y1 + band + 4, top = y2 + band + 8, bot = h - 16
-  const { lo, hi } = useMemo(() => {
-    let lo = 0, hi = 0
-    for (let i = 0; i < series.n; i++) { lo = Math.min(lo, series.sunEl[i], series.earthEl[i]); hi = Math.max(hi, series.sunEl[i], series.earthEl[i]) }
-    const pad = Math.max(1, (hi - lo) * 0.08)
-    return { lo: lo - pad, hi: Math.min(90, hi + pad) }
-  }, [series])
+  const band = BAND, y1 = Y1, y2 = Y2, top = TOP, bot = h - 16
   const Y = (v: number) => top + (1 - (v - lo) / (hi - lo)) * (bot - top)
   const path = (a: Float32Array) => { let d = ''; for (let i = 0; i < a.length; i++) if (!isNaN(a[i])) d += (d ? 'L' : 'M') + X(i).toFixed(1) + ' ' + Y(a[i]).toFixed(1); return d }
   const span = (series.n - 1) * series.stepMs
@@ -56,16 +61,60 @@ const Plot = memo(function Plot({ series, w, h }: { series: Series; w: number; h
   )
 })
 
-/** Mission-window timeline: sunlight and Earth-visibility bands above elevation curves, with a draggable playhead. */
-export function Timeline({ series, cursorMs, onScrub }: { series: Series; cursorMs: number; onScrub: (ms: number) => void }) {
+/** Everything about one instant of the stay, for the hover card. */
+function HoverCard({ ms, startMs, sky, horizon, margin, x, w }: { ms: number; startMs: number; sky: Sky; horizon?: Horizon; margin: number; x: number; w: number }) {
+  if (!sky.ok) return null
+  const hills = (az: number) => (horizon?.kind === 'terrain' ? horizonAt(horizon, az) : 0)
+  const deg = (v: number, p = 1) => `${v < 0 ? '−' : ''}${Math.abs(v).toFixed(p)}°`
+  const sunUp = sky.sunFrac > 0, earthUp = sky.earthUp
+  const sunState = sky.sunFrac >= 0.999 ? 'in full view' : sunUp ? `${Math.round(sky.sunFrac * 100)}% of the disc in view` : sky.sunEl > 0 ? 'hidden behind the hills' : 'below the horizon'
+  const earthState = earthUp ? 'in view' : sky.earthClear > 0 ? `only ${deg(sky.earthClear)} above the hills (antenna needs ${margin}°)` : sky.earthEl > 0 ? 'hidden behind the hills' : 'below the horizon'
+  const panel = sunOnPanel(sky.sunFrac, sky.sunR), ground = sunOnGround(sky.sunFrac, sky.sunEl, sky.sunR)
+  const both = sunUp && earthUp ? 'Power and radio both available' : sunUp ? 'Power only, no direct link to Earth' : earthUp ? 'Radio only, running on batteries' : 'No power and no direct link'
+  const d = new Date(ms)
+  const day = d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' })
+  const CARD = 300
+  const left = Math.min(Math.max(x - CARD / 2, 0), Math.max(0, w - CARD))
+  return (
+    <div className="tl-card" style={{ left, width: CARD }} role="tooltip">
+      <header><b>{day}, {fmtUtc(ms).slice(11, 16)} UTC</b><span>T+{fmtDuration(ms - startMs)}</span></header>
+      <dl>
+        <div className={'sun' + (sunUp ? ' up' : '')}><dt>Sun</dt><dd><b>{sunState}</b><small>elevation {deg(sky.sunEl, 2)}, azimuth {sky.sunAz.toFixed(0)}°{horizon?.kind === 'terrain' ? `, hills there ${deg(hills(sky.sunAz))}` : ''}</small></dd></div>
+        <div className={'earth' + (earthUp ? ' up' : '')}><dt>Earth</dt><dd><b>{earthState}</b><small>elevation {deg(sky.earthEl, 2)}, azimuth {sky.earthAz.toFixed(0)}°{horizon?.kind === 'terrain' ? `, hills there ${deg(hills(sky.earthAz))}` : ''}</small></dd></div>
+        <div><dt>Sunlight</dt><dd><b>{Math.round(panel).toLocaleString('en-GB')} W/m²</b> <small>on a Sun-facing panel, {ground.toFixed(0)} W/m² on level ground</small></dd></div>
+        <div><dt>Ground</dt><dd><b>{ground > 0 ? `about ${fmtC(equilibriumK(ground))}` : 'below −170 °C'}</b> <small>{ground > 0 ? 'estimate, bare level regolith' : 'in shadow (LRO Diviner)'}</small></dd></div>
+      </dl>
+      <p className={'tl-both' + (sunUp && earthUp ? ' ok' : !sunUp && !earthUp ? ' bad' : '')}>{both}</p>
+    </div>
+  )
+}
+
+/**
+ * Mission-window timeline: sunlight and Earth-visibility bands above elevation curves, with a draggable playhead.
+ * With `probe`, hovering anywhere shows that instant in full (Sun, Earth, hills, sunlight, ground temperature).
+ */
+export function Timeline({ series, cursorMs, onScrub, probe, horizon, margin = 0 }: { series: Series; cursorMs: number; onScrub: (ms: number) => void; probe?: (ms: number) => Sky; horizon?: Horizon; margin?: number }) {
   const [ref, { w, h }] = useSize<HTMLDivElement>()
   const drag = useRef(false)
+  const [hoverX, setHoverX] = useState<number | null>(null)
   const span = (series.n - 1) * series.stepMs
   const x = L + ((cursorMs - series.startMs) / span) * (w - L - R)
+  const { lo, hi } = useMemo(() => elevRange(series), [series])
+  const msAt = (px: number) => series.startMs + Math.min(1, Math.max(0, (px - L) / (w - L - R))) * span
   const at = (e: React.PointerEvent) => {
     const r = e.currentTarget.getBoundingClientRect()
-    onScrub(series.startMs + Math.min(1, Math.max(0, (e.clientX - r.left - L) / (w - L - R))) * span)
+    onScrub(msAt(e.clientX - r.left))
   }
+  const hov = useMemo(() => {
+    if (hoverX === null || !probe || w <= 0) return null
+    const px = Math.min(Math.max(hoverX, L), w - R), ms = msAt(px)
+    // snap to the nearest sample so the dots sit exactly on the drawn curves
+    const i = Math.round((ms - series.startMs) / series.stepMs)
+    const sx = L + (i / (series.n - 1)) * (w - L - R), sms = series.startMs + i * series.stepMs
+    return { x: sx, i, ms: sms, sky: probe(sms) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hoverX, probe, series, w])
+  const Y = (v: number) => TOP + (1 - (v - lo) / (hi - lo)) * (h - 16 - TOP)
   return (
     <div className="timeline" ref={ref}>
       {w > 0 && (
@@ -73,18 +122,27 @@ export function Timeline({ series, cursorMs, onScrub }: { series: Series; cursor
           role="slider" tabIndex={0} aria-label="Mission time" aria-valuemin={0} aria-valuemax={Math.round(span / HOUR)} aria-valuenow={Math.round((cursorMs - series.startMs) / HOUR)}
           aria-valuetext={`${Math.round((cursorMs - series.startMs) / HOUR)} hours after landing`}
           onPointerDown={(e) => { drag.current = true; e.currentTarget.setPointerCapture(e.pointerId); at(e) }}
-          onPointerMove={(e) => drag.current && at(e)}
+          onPointerMove={(e) => { const r = e.currentTarget.getBoundingClientRect(); if (e.pointerType === 'mouse' || drag.current) setHoverX(e.clientX - r.left); if (drag.current) at(e) }}
           onPointerUp={() => { drag.current = false }}
+          onPointerLeave={() => { if (!drag.current) setHoverX(null) }}
           onKeyDown={(e) => {
             const k = e.shiftKey ? 6 * HOUR : HOUR
             if (e.key === 'ArrowRight') { onScrub(cursorMs + k); e.preventDefault() }
             if (e.key === 'ArrowLeft') { onScrub(cursorMs - k); e.preventDefault() }
           }}>
-          <Plot series={series} w={w} h={h} />
+          <Plot series={series} w={w} h={h} lo={lo} hi={hi} />
+          {hov && (
+            <g className="tl-hover" pointerEvents="none">
+              <line x1={hov.x} x2={hov.x} y1={0} y2={h - 14} />
+              {isFinite(series.earthEl[hov.i]) && <circle cx={hov.x} cy={Y(series.earthEl[hov.i])} r={4} className="earth" />}
+              {isFinite(series.sunEl[hov.i]) && <circle cx={hov.x} cy={Y(series.sunEl[hov.i])} r={4} className="sun" />}
+            </g>
+          )}
           <line x1={x} x2={x} y1={0} y2={h - 14} className="playhead" />
           <path d={`M${x - 5} 0h10l-5 7z`} className="playhead-cap" />
         </svg>
       )}
+      {hov && <HoverCard ms={hov.ms} startMs={series.startMs} sky={hov.sky} horizon={horizon} margin={margin} x={hov.x} w={w} />}
     </div>
   )
 }

@@ -4,7 +4,10 @@ import '@fontsource/instrument-serif/400.css'
 import '@fontsource-variable/dm-sans'
 import '@fontsource/ibm-plex-mono/400.css'
 import '@fontsource/ibm-plex-mono/500.css'
+import './styles/fonts.css'
 import './styles/app.css'
+import './styles/workspace.css'
+import './styles/explorer.css'
 import App from './App'
 
 createRoot(document.getElementById('root')!).render(<StrictMode><App /></StrictMode>)

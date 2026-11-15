@@ -11,6 +11,7 @@ import { icrfToMoon } from '../../engine/lunarFrame'
 import { Terrain } from './Terrain'
 import { DetailImagery, MAX_ZOOM } from './DetailImagery'
 import { buildAstronaut, buildOrbiter } from './Figures'
+import { PsrMap } from './NasaLayers'
 import { Input, type Virtual } from './Input'
 import { buildRoverModel, MAX_CLIMB_DEG, ROVER_SPEEDS, type RoverSpeed, type RoverTelemetry } from './Rover'
 import { computeSky, makeFrame, newSky, SPHERE_HORIZON } from '../../engine/sky'
@@ -18,7 +19,7 @@ import { computeSky, makeFrame, newSky, SPHERE_HORIZON } from '../../engine/sky'
 export type Lighting = 'sun' | 'full'
 export type ViewMode = 'globe' | 'pole' | 'drone' | 'rover' | 'surface' | 'map'
 export type MapKind = 'global' | 'pole'
-export interface SiteMark { id: string; name: string; lat: number; lon: number }
+export interface SiteMark { id: string; name: string; lat: number; lon: number; note?: string }
 export interface HoverInfo { lat: number; lon: number; heightM: number | null; slopeDeg: number | null; source: string }
 export interface EngineStatus {
   mode: ViewMode
@@ -37,6 +38,8 @@ export interface EngineCallbacks {
   onRover?: (t: RoverTelemetry) => void
   onMeasure?: (m: MeasureResult | null) => void
   onMeasureMode?: (on: boolean) => void
+  /** Loading state of NASA's shadowed-region map. */
+  onNasa?: (state: 'idle' | 'loading' | 'ready' | 'failed') => void
 }
 /** A two-point measurement along the surface: great-circle path, with an elevation profile from LOLA. */
 export interface MeasureResult {
@@ -65,7 +68,7 @@ function frameAt(lat: number, lon: number): Frame {
 }
 const dot = (a: number[], b: number[]) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 
-const PATCH = { pole: { span: 600000, n: 1536 }, drone: { span: 160000, n: 1536 }, rover: { span: 60000, n: 2048 } }
+const PATCH = { pole: { span: 600000, n: 1536 }, drone: { span: 160000, n: 1536 }, rover: { span: 60000, n: 1536 } }
 
 export class ExplorerEngine {
   private renderer: THREE.WebGLRenderer
@@ -107,6 +110,7 @@ export class ExplorerEngine {
   private orbitRing: THREE.LineLoop
   private globeSun = new THREE.DirectionalLight(0xfff1dd, 2.2)
   private imagery: DetailImagery | null = null
+  private psr = new PsrMap(() => this.applyPsr())
   private sky = new SkyBodies(5000)
   private globeStars = new StarSky(400)
   private terrStars = new StarSky(50000)
@@ -138,6 +142,9 @@ export class ExplorerEngine {
   private status: EngineStatus = { mode: 'globe', busy: null, resolution: '', stay: null, blocked: null }
   private fly: { cam: THREE.Camera; ctl: OrbitControls | null; p0: THREE.Vector3; p1: THREE.Vector3; t0v: THREE.Vector3; t1v: THREE.Vector3; start: number; dur: number; arc?: boolean } | null = null
   private input = new Input()
+  private dest: { name: string; lat: number; lon: number; status: 'driving' | 'arrived' | 'blocked' | 'paused' } | null = null
+  private picking = false
+  private destMark = new THREE.Group()
   private rover = { lat: 0, lon: 0, e: 0, n: 0, heading: 0, v: 0, dist: 0, battery: 82, cam: 'chase' as 'chase' | 'mast', lights: false, speed: 'x50' as RoverSpeed, camYaw: 0, camDist: 0.011, placed: false, blocked: null as string | null, sunFrac: 0, sunEl: 0, earthUp: false, earthEl: 0, lastSky: 0, lastSent: 0, trail: [] as THREE.Vector3[] }
   private roverModel = buildRoverModel()
   private roverGroup = new THREE.Group()
@@ -193,13 +200,23 @@ export class ExplorerEngine {
     this.detail.group.visible = false
     this.detail.setBase(this.terrain)
     // the detail square shares the base square's look: same layer, colours, lights and markers
-    for (const k of ['uSelR', 'uLayer', 'uMinH', 'uMaxH', 'uContours', 'uFill', 'uGrid', 'uSunScene', 'uEarthScene', 'uSel', 'uLamp', 'uLampPos', 'uLampDir', 'uGrain', 'uFull', 'uLightScene', 'uSpanKm'] as const)
+    for (const k of ['uColor', 'uHasColor', 'uDet0', 'uDet1', 'uDet2', 'uBox0', 'uBox1', 'uBox2', 'uHasDet', 'uPsr', 'uHasPsr', 'uFrE', 'uFrN', 'uFrU', 'uSelR', 'uLayer', 'uMinH', 'uMaxH', 'uContours', 'uFill', 'uGrid', 'uSunScene', 'uEarthScene', 'uSel', 'uLamp', 'uLampPos', 'uLampDir', 'uGrain', 'uFull', 'uLightScene', 'uSpanKm'] as const)
       (this.detail.uniforms as Record<string, unknown>)[k] = this.terrain.uniforms[k]
     this.imagery = new DetailImagery(this.renderer.capabilities.getMaxAnisotropy(), () => this.applyDetailImagery())
     this.globeScene.add(this.mGroups.globe); this.mapScene.add(this.mGroups.map); this.terrScene.add(this.mGroups.terr, this.paths)
     this.astro.group.scale.setScalar(0.001)
     this.astro.group.visible = false
     this.terrScene.add(this.astro.group)
+    {
+      const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.6, 120, 8, 1, true), new THREE.MeshBasicMaterial({ color: 0xffb867, transparent: true, opacity: 0.55, depthWrite: false }))
+      beam.position.y = 60
+      const ring = new THREE.Mesh(new THREE.RingGeometry(6, 8, 40), new THREE.MeshBasicMaterial({ color: 0xffb867, transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthWrite: false }))
+      ring.rotation.x = -Math.PI / 2; ring.position.y = 0.4
+      this.destMark.add(beam, ring)
+      this.destMark.scale.setScalar(0.001)
+      this.destMark.visible = false
+      this.terrScene.add(this.destMark)
+    }
     this.orbiter.scale.setScalar(0.011)
     const ring = new THREE.BufferGeometry().setFromPoints(Array.from({ length: 256 }, (_, i) => new THREE.Vector3(Math.cos((i / 256) * Math.PI * 2), Math.sin((i / 256) * Math.PI * 2), 0).multiplyScalar(1.0576)))
     this.orbitRing = new THREE.LineLoop(ring, new THREE.LineBasicMaterial({ color: 0x9cc6ff, transparent: true, opacity: 0.22 }))
@@ -213,11 +230,13 @@ export class ExplorerEngine {
     this.terrCtl = this.controls(this.terrCam, { min: 0.05, max: 3000, pan: true })
     this.terrCtl.maxPolarAngle = Math.PI * 0.497
     this.terrCtl.screenSpacePanning = false
+    this.terrCtl.zoomToCursor = true
     this.poleTopCtl = this.controls(this.terrTop, { min: 0, max: 0, pan: true })
     this.poleTopCtl.enableRotate = false
     this.poleTopCtl.mouseButtons = { LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN }
     this.poleTopCtl.touches = { ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.DOLLY_PAN }
     this.poleTopCtl.minZoom = 0.8; this.poleTopCtl.maxZoom = 60
+    this.poleTopCtl.zoomToCursor = true
 
     // ---- flat map scene
     this.mapScene.add(this.flat.mesh, this.mapMarks)
@@ -228,12 +247,14 @@ export class ExplorerEngine {
     this.mapCtl.touches = { ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.DOLLY_PAN }
     this.mapCtl.minZoom = 0.9; this.mapCtl.maxZoom = 600
     this.mapCtl.screenSpacePanning = true
+    this.mapCtl.zoomToCursor = true
 
     el.addEventListener('pointerdown', this.onDown)
     el.addEventListener('pointerup', this.onUp)
     el.addEventListener('pointermove', this.onMove)
-    el.addEventListener('pointerleave', () => cb.onHover(null))
+    el.addEventListener('pointerleave', () => { cb.onHover(null); this.hoverSite = null })
     el.addEventListener('dblclick', this.onDbl)
+    el.addEventListener('wheel', this.onWheelAnchor, { passive: true })
     el.addEventListener('wheel', (e) => { if (this.mode === 'rover' && this.rover.cam === 'chase') { this.rover.camDist = Math.max(0.006, Math.min(0.4, this.rover.camDist * (e.deltaY > 0 ? 1.12 : 0.89))); e.preventDefault() } }, { passive: false })
     // keys work wherever focus is (after pressing an on-screen button too), except while typing in a field
     window.addEventListener('keydown', this.onKey)
@@ -245,6 +266,7 @@ export class ExplorerEngine {
     this.resize()
     this.applyMode()
     this.loop()
+    if (import.meta.env.DEV) (globalThis as Record<string, unknown>).__kuroEngine = this
   }
 
   // ------------------------------------------------------------------ setup helpers
@@ -288,6 +310,13 @@ export class ExplorerEngine {
       })
     } else this.loadMoonTrek()
     this.patchKey = ''
+    this.patchCache.clear()
+    // load the elevation files into the worker now, and build the most-used squares while the globe is showing
+    if (d.global || d.pole) {
+      // hand the loaded elevation to the terrain worker (no second download)
+      if (this.worker) this.worker.postMessage({ init: d }); else this.mainWorker()
+      setTimeout(() => this.prefetch(['pole', 'site', 'rover']), 1500)
+    }
     this.applyMode()
   }
 
@@ -317,7 +346,9 @@ export class ExplorerEngine {
   private applyImagery() {
     const t = this.colorTex ?? this.trekTex
     this.globe.setColor(t)
+    this.ctxGlobe.setColor(t)
     this.flat.uniforms.uColor.value = t; this.flat.uniforms.uHasColor.value = t ? 1 : 0
+    this.terrain.uniforms.uColor.value = t; this.terrain.uniforms.uHasColor.value = t ? 1 : 0
   }
 
   setMode(m: ViewMode) { if (m !== this.mode) { this.mode = m; this.applyMode() } }
@@ -331,9 +362,11 @@ export class ExplorerEngine {
     this.flat.uniforms.uLayer.value = i
     this.terrain.uniforms.uLayer.value = i
     // around the terrain the Moon shows the same layer; real-Moon and stay layers use plain regolith shading
-    this.ctxGlobe.uniforms.uLayer.value = l === 'imagery' || l === 'sunStay' || l === 'earthStay' ? 1 : i
+    this.ctxGlobe.uniforms.uLayer.value = l === 'sunStay' || l === 'earthStay' ? 0 : i
     if (this.detail.patch && (l === 'sunStay' || l === 'earthStay')) this.queueStay()
     if ((l === 'sunStay' || l === 'earthStay')) this.queueStay()
+    // NASA's shadowed-region map is fetched only when a layer needs it
+    if ((l === 'psr' || l === 'sunStay') && this.psr.state === 'idle') { this.psr.load(); this.setStatus({ busy: 'Loading NASA’s permanently shadowed regions from Moon Trek…' }) }
   }
 
   /** Ground distance (metres) covered by one screen pixel at the centre of the view, or null where it varies too much. */
@@ -368,7 +401,7 @@ export class ExplorerEngine {
     this.globeCtl.autoRotateSpeed = 0.35
     this.terrCtl.autoRotate = this.opts.autoRotate && (this.mode === 'drone' || this.mode === 'pole')
     this.terrCtl.autoRotateSpeed = 0.5
-    this.labelLayer.style.display = this.opts.labels ? '' : 'none'
+    this.hoverSite = null
   }
 
   setTime(ms: number) {
@@ -419,7 +452,9 @@ export class ExplorerEngine {
 
   setSites(list: SiteMark[], selectedId: string) {
     this.sites = list
+    const prev = this.selected?.id
     this.selected = list.find((s) => s.id === selectedId) ?? null
+    if (this.selected && this.selected.id !== prev && getMoonData()) setTimeout(() => this.prefetch(['site', 'rover']), 800)
     this.buildMarks()
     if ((this.mode === 'drone' || this.mode === 'surface') && this.selected) this.ensurePatch()
   }
@@ -429,14 +464,20 @@ export class ExplorerEngine {
     const s = this.selected
     if (!s) return
     if (this.mode === 'globe') {
-      // look from no more than 35° off the equator, so polar sites sit near the limb with the familiar face in view
-      const to = toScene(this.me(Math.max(-35, Math.min(35, s.lat)), s.lon)).normalize()
-      const d = Math.min(Math.max(this.globeCam.position.length(), 2.6), 3.8)
+      // look straight down on the site so it sits in the middle of the view
+      const to = toScene(this.me(s.lat, s.lon)).normalize()
+      const d = Math.min(Math.max(this.globeCam.position.length(), 1.6), 3.8)
       this.flyTo(this.globeCam, this.globeCtl, to.multiplyScalar(d), new THREE.Vector3(), instant, true)
     } else if (this.mode === 'map' && this.mapKind === 'global') {
       const [x, y] = mapXY(s.lat, s.lon)
       this.mapCam.zoom = Math.max(this.mapCam.zoom, 3); this.mapCam.updateProjectionMatrix()
-      this.flyTo(this.mapCam, this.mapCtl, new THREE.Vector3(x, Math.max(-0.68, Math.min(0.68, y)), 5), new THREE.Vector3(x, Math.max(-0.68, Math.min(0.68, y)), 0), instant)
+      this.flyTo(this.mapCam, this.mapCtl, new THREE.Vector3(x, y, 5), new THREE.Vector3(x, y, 0), instant)
+    } else if (this.mode === 'map' && this.mapKind === 'pole' && this.terrain.patch) {
+      const p = this.siteLocal(s)
+      if (p) {
+        this.terrTop.zoom = Math.max(this.terrTop.zoom, 4); this.terrTop.updateProjectionMatrix()
+        this.flyTo(this.terrTop, this.poleTopCtl, new THREE.Vector3(p.x, 2000, p.z), new THREE.Vector3(p.x, 0, p.z), instant)
+      }
     } else if (this.mode === 'pole' && this.terrain.patch && this.frame) {
       const p = this.siteLocal(s)
       if (p && Math.abs(p.x) < 300 && Math.abs(p.z) < 300) this.flyTo(this.terrCam, this.terrCtl, new THREE.Vector3(p.x + 18, p.y + 26, p.z + 34), p, instant)
@@ -467,7 +508,7 @@ export class ExplorerEngine {
     cancelAnimationFrame(this.raf)
     this.ro.disconnect()
     document.removeEventListener('visibilitychange', this.onVisibility)
-    this.worker?.terminate()
+    this.worker?.terminate(); this.prefetcher?.terminate()
     for (const c of [this.globeCtl, this.terrCtl, this.mapCtl, this.poleTopCtl]) c.dispose()
     this.globe.dispose(); this.flat.dispose(); this.terrain.dispose(); this.sky.dispose(); this.globeStars.dispose(); this.terrStars.dispose()
     for (const s of [this.globeScene, this.terrScene, this.mapScene]) s.traverse((o) => {
@@ -483,7 +524,7 @@ export class ExplorerEngine {
     window.removeEventListener('keydown', this.onKey)
     window.removeEventListener('keyup', this.onKeyUp)
     window.removeEventListener('blur', this.onBlur)
-    this.imagery?.dispose(); this.ctxGlobe.dispose(); this.detail.dispose()
+    this.imagery?.dispose(); this.psr.dispose(); this.ctxGlobe.dispose(); this.detail.dispose()
   }
 
   // ------------------------------------------------------------------ modes
@@ -494,14 +535,18 @@ export class ExplorerEngine {
     const d = getMoonData()
     let blocked: string | null = null
     if (this.needsTerrain()) {
-      if (!d || (!d.global && !d.pole)) blocked = 'This view is built from NASA LOLA elevation data, which is not installed yet. Run “npm run fetch:moon” once, then reload.'
+      if (!d) { this.setStatus({ mode: this.mode, blocked: null, busy: 'Loading NASA LOLA elevation…' }); return }
+      if (!d.global && !d.pole) blocked = 'This view is built from NASA LOLA elevation data, which is not installed yet. Run “npm run fetch:moon” once, then reload.'
       else if ((this.mode === 'drone' || this.mode === 'surface' || this.mode === 'rover') && !this.selected) blocked = 'Pick a site first.'
     }
-    this.setStatus({ mode: this.mode, blocked })
+    this.setStatus({ mode: this.mode, blocked, ...(this.status.busy?.startsWith('Loading NASA LOLA') ? { busy: null } : {}) })
     this.labelLayer.style.visibility = blocked ? 'hidden' : ''
     if (blocked) return
     if (this.mode === 'globe') { this.globeCtl.enabled = true; this.setStatus({ resolution: d?.global ? `LOLA global elevation, ~${((d.global.pixelDeg * DEG * R_KM)).toFixed(1)} km grid, ×${this.exag.globe} vertical` : 'No elevation installed: smooth sphere' }) }
-    else if (this.mode === 'map' && this.mapKind === 'global') { this.mapCtl.enabled = true; this.mapCam.position.set(0, 0, 5); this.mapCtl.target.set(0, 0, 0); this.mapCam.zoom = 1; this.mapCam.updateProjectionMatrix(); this.setStatus({ resolution: 'Equirectangular map' }) }
+    else if (this.mode === 'map' && this.mapKind === 'global') { this.mapCtl.enabled = true
+      // open on the selected site, so it is in the middle of the map
+      const [mx, my] = this.selected ? mapXY(this.selected.lat, this.selected.lon) : [0, 0]
+      this.mapCam.position.set(mx, my, 5); this.mapCtl.target.set(mx, my, 0); this.mapCam.zoom = this.selected ? 2 : 1; this.mapCam.updateProjectionMatrix(); this.setStatus({ resolution: 'Equirectangular map' }) }
     else this.ensurePatch()
     this.setOptions({})
     this.terrain.setExaggeration(this.mode === 'surface' || this.mode === 'map' || this.mode === 'rover' ? 1 : this.exag.terrain)
@@ -517,23 +562,83 @@ export class ExplorerEngine {
     return null
   }
 
+  // ------------------------------------------------------------------ terrain building
+  /** Recently built squares by key (LRU), so returning to a view is instant. */
+  private patchCache = new Map<string, PatchResult>()
+  private prefetcher: Worker | null = null
+  private prefetchQueue: PatchRequest[] = []
+  private prefetchBusy = false
+  private prefetchKey = ''
+  /** Whether the square on screen is still the quick low-resolution preview. */
+  private previewKey = ''
+  /** Keys the main worker is building right now. */
+  private building = new Set<string>()
+
+  private cachePut(p: PatchResult) {
+    if (!p.ok || !p.key) return
+    this.patchCache.delete(p.key)
+    this.patchCache.set(p.key, p)
+    while (this.patchCache.size > 4) this.patchCache.delete(this.patchCache.keys().next().value!)
+  }
+  private patchRequest(want: { lat: number; lon: number; span: number; n: number; key: string }, n: number, tag?: string): PatchRequest {
+    return { id: this.reqId, base: new URL(import.meta.env.BASE_URL, location.href).href, lat: want.lat, lon: want.lon, spanM: want.span, n, key: want.key, tag }
+  }
+  private mainWorker(): Worker {
+    if (!this.worker) {
+      this.worker = new Worker(new URL('./patchWorker.ts', import.meta.url), { type: 'module' })
+      const d = getMoonData(); if (d) this.worker.postMessage({ init: d })
+      this.worker.onmessage = (ev: MessageEvent<PatchResult>) => {
+        const p = ev.data
+        if (p.tag === 'detail') this.onDetail(p)
+        else if (p.tag === 'quick') this.onQuick(p)
+        else this.onPatch(p)
+      }
+    }
+    return this.worker
+  }
+
   private ensurePatch() {
     const want = this.wantPatch()
     if (!want) return
     if (want.key === this.patchKey && this.terrain.patch) { this.enterTerrainView(false); return }
     this.patchKey = want.key
-    this.setStatus({ busy: 'Building terrain from LOLA elevation…' })
-    if (!this.worker) {
-      this.worker = new Worker(new URL('./patchWorker.ts', import.meta.url), { type: 'module' })
-      this.worker.onmessage = (ev: MessageEvent<PatchResult>) => (ev.data.tag === 'detail' ? this.onDetail(ev.data) : this.onPatch(ev.data))
-    }
-    const req: PatchRequest = { id: ++this.reqId, base: new URL(import.meta.env.BASE_URL, location.href).href, lat: want.lat, lon: want.lon, spanM: want.span, n: want.n }
-    this.worker.postMessage(req)
+    this.reqId++
+    const hit = this.patchCache.get(want.key)
+    if (hit) { this.cachePut(hit); this.previewKey = ''; this.applyPatch(hit, true); return }
+    const w = this.mainWorker()
+    // a coarse preview first (a few milliseconds), then the full-resolution square replaces it in place;
+    // not while driving, where the old square is still on screen and a sudden coarse one would jar
+    const preview = !(this.mode === 'rover' && this.terrain.patch && this.terrain.patch.key?.startsWith('rover:'))
+    this.setStatus({ busy: preview ? 'Building terrain from LOLA elevation…' : 'Loading terrain ahead of the rover…' })
+    if (preview) w.postMessage(this.patchRequest(want, Math.min(384, want.n), 'quick'))
+    // if the background builder already has this square in hand, let it finish instead of building it twice
+    if (this.prefetchKey === want.key) return
+    this.prefetchQueue = this.prefetchQueue.filter((q) => q.key !== want.key)
+    this.building.add(want.key)
+    w.postMessage(this.patchRequest(want, want.n))
+  }
+
+  private onQuick(p: PatchResult) {
+    if (this.disposed || p.id !== this.reqId || !p.ok) return
+    this.previewKey = p.key ?? ''
+    this.applyPatch(p, true)
+    this.setStatus({ busy: 'Sharpening terrain…' })
   }
 
   private onPatch(p: PatchResult) {
-    if (this.disposed || p.id !== this.reqId) return
+    if (this.disposed) return
+    if (p.key) this.building.delete(p.key)
+    this.cachePut(p)
+    if (p.id !== this.reqId) return
     if (!p.ok) { this.setStatus({ busy: null, blocked: `Terrain could not be built: ${p.error}` }); return }
+    // upgrading the preview: same frame, same camera — just swap in the detailed square
+    const upgrade = this.previewKey !== '' && this.previewKey === p.key && !!this.terrain.patch
+    this.previewKey = ''
+    this.applyPatch(p, !upgrade)
+  }
+
+  /** Show a built square. fresh: also set up the view (camera, markers); otherwise replace the square in place. */
+  private applyPatch(p: PatchResult, fresh: boolean) {
     this.frame = frameAt(p.lat, p.lon)
     this.terrain.setPatch(p, this.renderer)
     this.dropDetail()
@@ -544,8 +649,47 @@ export class ExplorerEngine {
     this.stayKey = ''
     if (this.layer === 'sunStay' || this.layer === 'earthStay') this.queueStay()
     this.placeTerrainMarks()
-    this.setStatus({ busy: null, resolution: `${p.source}, mesh ${(p.spanM / 1000).toFixed(0)} km wide` })
-    this.enterTerrainView(true)
+    this.setStatus({ busy: this.previewKey ? 'Sharpening terrain…' : null, resolution: `${p.source}, mesh ${(p.spanM / 1000).toFixed(0)} km wide` })
+    if (fresh) this.enterTerrainView(true)
+    else { this.placeAstronaut(); this.rebuildMeasure() }
+  }
+
+  /** Build likely squares in the background — the South Pole and the selected site — so opening them is instant. */
+  private prefetch(keys: ('pole' | 'site' | 'rover')[]) {
+    if (!this.selected && keys.includes('site')) keys = keys.filter((k) => k !== 'site')
+    for (const k of keys) {
+      const s = this.selected!, ll = `${s?.lat.toFixed(4)},${s?.lon.toFixed(4)}`
+      const want = k === 'pole'
+        ? { lat: -90, lon: 0, span: PATCH.pole.span, n: PATCH.pole.n, key: 'pole' }
+        : k === 'site'
+          ? { lat: s.lat, lon: s.lon, span: PATCH.drone.span, n: PATCH.drone.n, key: `site:${ll}` }
+          : { lat: s.lat, lon: s.lon, span: PATCH.rover.span, n: PATCH.rover.n, key: `rover:${ll}` }
+      if (this.patchCache.has(want.key) || this.building.has(want.key) || this.prefetchKey === want.key || this.prefetchQueue.some((q) => q.key === want.key)) continue
+      this.prefetchQueue.push({ id: -1, base: new URL(import.meta.env.BASE_URL, location.href).href, lat: want.lat, lon: want.lon, spanM: want.span, n: want.n, key: want.key, tag: 'prefetch' })
+    }
+    this.pumpPrefetch()
+  }
+  private pumpPrefetch() {
+    if (this.prefetchBusy || !this.prefetchQueue.length || this.disposed) return
+    if (!this.prefetcher) {
+      this.prefetcher = new Worker(new URL('./patchWorker.ts', import.meta.url), { type: 'module' })
+      const d = getMoonData(); if (d) this.prefetcher.postMessage({ init: d })
+      this.prefetcher.onmessage = (ev: MessageEvent<PatchResult>) => {
+        this.prefetchBusy = false
+        this.prefetchKey = ''
+        const p = ev.data
+        this.cachePut(p)
+        // the view may be waiting for exactly this square
+        if (p.ok && p.key === this.patchKey && (!this.terrain.patch || this.previewKey === p.key)) { this.reqId++; const up = this.previewKey === p.key; this.previewKey = ''; this.applyPatch(p, !up) }
+        this.pumpPrefetch()
+      }
+    }
+    let next = this.prefetchQueue.shift()
+    while (next && (this.patchCache.has(next.key!) || this.building.has(next.key!))) next = this.prefetchQueue.shift()
+    if (!next) return
+    this.prefetchBusy = true
+    this.prefetchKey = next.key!
+    this.prefetcher.postMessage(next)
   }
 
   private enterTerrainView(fresh: boolean) {
@@ -739,6 +883,9 @@ export class ExplorerEngine {
     const m = new THREE.Matrix4().set(cx[0], cy[0], cz[0], 0, cx[1], cy[1], cz[1], -R_KM, cx[2], cy[2], cz[2], 0, 0, 0, 0, 1)
     m.multiply(new THREE.Matrix4().makeScale(R_KM, R_KM, R_KM))
     this.ctxGlobe.mesh.matrix.copy(m)
+    this.terrain.uniforms.uFrE.value.set(f.e[0], f.e[1], f.e[2])
+    this.terrain.uniforms.uFrN.value.set(f.n[0], f.n[1], f.n[2])
+    this.terrain.uniforms.uFrU.value.set(f.u[0], f.u[1], f.u[2])
     this.ctxGlobe.mesh.matrixWorldNeedsUpdate = true
     const p = this.terrain.patch!
     const cell = p.spanM / p.n
@@ -754,6 +901,13 @@ export class ExplorerEngine {
     u.uCamObj.value.copy(this.activeCam().position).applyMatrix4(inv)
     if (this.lighting === 'full') u.uLight.value.copy(this.terrain.uniforms.uLightScene.value).transformDirection(inv)
     else u.uLight.value.copy(u.uSun.value)
+  }
+
+  private applyPsr() {
+    if (this.status.busy?.startsWith('Loading NASA')) this.setStatus({ busy: null })
+    const t = this.psr.texture
+    for (const u of [this.globe.uniforms, this.flat.uniforms, this.ctxGlobe.uniforms, this.terrain.uniforms]) { u.uPsr.value = t; u.uHasPsr.value = t ? 1 : 0 }
+    this.cb.onNasa?.(this.psr.state)
   }
 
   private dropDetail() {
@@ -816,15 +970,22 @@ export class ExplorerEngine {
       lat = Math.asin(p.y) / DEG; lon = Math.atan2(p.x, p.z) / DEG
     } else if (this.mode === 'map' && this.mapKind === 'global') {
       const t = this.mapCtl.target; lat = t.y * 90; lon = t.x * 90
+    } else if (this.frame && this.terrain.patch) {
+      // terrain views: what the camera is looking at
+      const t = this.mode === 'rover' ? new THREE.Vector3(this.rover.e / 1000, 0, -this.rover.n / 1000) : this.mode === 'map' ? this.poleTopCtl.target : this.terrCtl.target
+      ;[lat, lon] = this.localToLatLon(t.x * 1000, -t.z * 1000)
     } else return
-    const mpp = (this.metresPerPixel() ?? 1e9) / Math.min(window.devicePixelRatio || 1, 2)
+    let mppRaw = this.metresPerPixel()
+    if (mppRaw === null && this.mode === 'rover') mppRaw = (this.terrCam.position.distanceTo(this.roverGroup.position) * 1000 * 2 * Math.tan((this.terrCam.fov * DEG) / 2)) / Math.max(1, this.host.clientHeight)
+    const mpp = (mppRaw ?? 1e9) / Math.min(window.devicePixelRatio || 1, 2)
     // tile pixel at zoom z covers π·R / (256·2^z) metres in latitude; pick the first z at least as fine as a screen pixel
     let z = Math.ceil(Math.log2((Math.PI * R_M) / (256 * mpp)))
-    // near the poles, the window must also span enough longitude for the visible ground
-    const needDeg = ((mpp * this.host.clientWidth) / (R_M * Math.max(Math.cos(lat * DEG), 0.02))) / DEG
-    z = Math.min(z, Math.floor(Math.log2((12 * 360) / (2 * Math.max(needDeg, 1e-6)))))
+    // near the poles, the window must also span enough longitude for the visible ground (up to 16 tiles across)
+    const groundM = Math.min(mpp * this.host.clientWidth, this.terrain.patch && this.mode !== 'globe' && !(this.mode === 'map' && this.mapKind === 'global') ? this.terrain.patch.spanM : Infinity)
+    const needDeg = Math.min(360, (groundM / (R_M * Math.max(Math.cos(lat * DEG), 0.01))) / DEG)
+    z = Math.min(z, Math.floor(Math.log2((15 * 360) / (2 * Math.max(needDeg, 1e-6)))))
     z = Math.max(0, Math.min(MAX_ZOOM, z))
-    im.request(lat, lon, z >= 4 ? z : 0)
+    im.request(lat, lon, z >= 4 ? z : 0, needDeg)
     // never let the camera sink into the (exaggerated) terrain under it
     if (this.mode === 'globe') {
       const smp = this.sampler(), c = this.globeCam.position.clone().normalize()
@@ -840,7 +1001,7 @@ export class ExplorerEngine {
   }
   private applyDetailImagery() {
     const L = this.imagery!.levels
-    for (const u of [this.globe.uniforms, this.flat.uniforms]) {
+    for (const u of [this.globe.uniforms, this.flat.uniforms, this.ctxGlobe.uniforms, this.terrain.uniforms]) {
       u.uDet0.value = L[0].texture; u.uDet1.value = L[1].texture; u.uDet2.value = L[2].texture
       u.uBox0.value.copy(L[0].box); u.uBox1.value.copy(L[1].box); u.uBox2.value.copy(L[2].box)
       u.uHasDet.value.set(L[0].ready ? 1 : 0, L[1].ready ? 1 : 0, L[2].ready ? 1 : 0)
@@ -940,10 +1101,17 @@ export class ExplorerEngine {
     const keep = new Set<string>()
     for (const s of this.sites) {
       keep.add('site:' + s.id)
-      this.label('site:' + s.id, s.name, s.id === this.selected?.id ? 'xp-lbl xs sel' : 'xp-lbl xs')
+      const el = this.label('site:' + s.id, '', s.id === this.selected?.id ? 'xp-lbl xs sel' : 'xp-lbl xs')
+      el.innerHTML = ''
+      const b = document.createElement('b'); b.textContent = s.name
+      const d = document.createElement('span'); d.className = 'lbl-d'
+      d.textContent = `${s.note ? s.note + " · " : ""}${Math.abs(s.lat).toFixed(2)}°${s.lat < 0 ? 'S' : 'N'} ${Math.abs(s.lon).toFixed(2)}°${s.lon < 0 ? 'W' : 'E'}`
+      el.append(b, d)
+      el.onclick = () => this.cb.onSelect(s.id)
     }
     for (const k of ['sun', 'earth', 'N', 'E', 'S', 'W', 'orbiter']) keep.add('b:' + k)
-    keep.add('m:a'); keep.add('m:b')
+    keep.add('m:a'); keep.add('m:b'); keep.add('b:dest')
+    this.label('b:dest', 'Destination', 'xp-lbl xs dest')
     this.label('m:a', 'A', 'xp-lbl mpin'); this.label('m:b', 'B', 'xp-lbl mpin')
     this.label('b:orbiter', 'Orbiter · illustrative', 'xp-lbl body orb')
     this.label('b:sun', 'Sun', 'xp-lbl body sun'); this.label('b:earth', 'Earth', 'xp-lbl body earth')
@@ -1017,20 +1185,34 @@ export class ExplorerEngine {
     return this.uiRects
   }
 
+  /** Site under the cursor (its name and details show while hovered). */
+  private hoverSite: string | null = null
+  /** Where each visible site dot is on screen, for hovering and tolerant clicks. */
+  private siteScreen = new Map<string, [number, number]>()
   private updateLabels(cam: THREE.Camera) {
-    if (!this.opts.labels) return
+    this.siteScreen.clear()
     const w = this.host.clientWidth, h = this.host.clientHeight
     const hostRect = this.host.getBoundingClientRect()
     const blocks = this.blockers()
     // gather candidates with a priority, then place greedily so labels never pile up on each other
     const cand: { el: HTMLDivElement; x: number; y: number; pri: number }[] = []
     const put = (key: string, v: THREE.Vector3 | null, pri: number, occl?: () => boolean) => {
+      // (pri may be raised for the hovered site)
       const el = this.labelEls.get(key)
       if (!el) return
       if (!v || (occl && occl())) { el.style.opacity = '0'; return }
       const p = v.clone().project(cam)
       if (p.z > 1 || p.z < -1 || Math.abs(p.x) > 1.02 || Math.abs(p.y) > 1.02) { el.style.opacity = '0'; return }
-      cand.push({ el, x: ((p.x + 1) / 2) * w, y: ((1 - p.y) / 2) * h, pri })
+      const x = ((p.x + 1) / 2) * w, y = ((1 - p.y) / 2) * h
+      if (key.startsWith('site:')) {
+        this.siteScreen.set(key.slice(5), [x, y])
+        // only the selected site and the one under the cursor are named, unless "All names" is on: the Moon stays clear
+        const id = key.slice(5)
+        el.classList.toggle('hov', id === this.hoverSite)
+        if (!this.opts.labels && id !== this.selected?.id && id !== this.hoverSite) { el.style.opacity = '0'; return }
+        if (id === this.hoverSite) pri = 200
+      }
+      cand.push({ el, x, y, pri })
     }
     const showSites = this.mode !== 'surface' && this.mode !== 'rover'
     for (const s of this.sites) {
@@ -1039,9 +1221,13 @@ export class ExplorerEngine {
       if (!showSites) { put(key, null, 0); continue }
       let v: THREE.Vector3 | null = null, occl: (() => boolean) | undefined
       if (this.mode === 'globe') {
-        v = toScene(this.me(s.lat, s.lon)).multiplyScalar(1.01)
+        // anchor on the dot itself (it sits on the terrain), so names stay put however close the camera gets
+        const dot = this.globeMarks.children.find((m) => m.userData.id === s.id)
+        v = dot ? dot.position.clone() : toScene(this.me(s.lat, s.lon)).multiplyScalar(1.002)
         const c = cam.position, d = v.clone().sub(c), t = -c.dot(d) / d.lengthSq()
-        occl = () => t > 0 && t < 1 && c.clone().addScaledVector(d, t).length() < 0.995
+        // hidden only when the Moon's limb is in the way (compare with the dot's own radius: polar sites sit low)
+        const rOcc = Math.min(0.995, v.length() * 0.996)
+        occl = () => t > 0 && t < 0.97 && c.clone().addScaledVector(d, t).length() < rOcc
       } else if (this.mode === 'map' && this.mapKind === 'global') { const [x, y] = mapXY(s.lat, s.lon); v = new THREE.Vector3(x, y, 0) }
       else { v = this.siteLocal(s); if (v) v.y += this.pinTop(s.id) }
       put(key, v, sel ? 100 : s.id.match(/^(im2|a11|cy3|ce6|shackleton)$/) ? 10 : 1, occl)
@@ -1053,6 +1239,8 @@ export class ExplorerEngine {
     for (const k of Object.keys(comp)) put('b:' + k, this.mode === 'surface' ? cam.position.clone().add(new THREE.Vector3(comp[k][0] * 3000, 0, comp[k][1] * 3000)) : null, 60)
     const ends = this.mode === 'globe' ? this.mEnds.globe : this.mode === 'map' && this.mapKind === 'global' ? this.mEnds.map : this.mEnds.terr
     put('m:a', ends[0] ?? null, 95); put('m:b', ends[1] ?? null, 95)
+    if (this.labelEls.get('b:dest') && this.dest) this.labelEls.get('b:dest')!.textContent = this.dest.name
+    put('b:dest', this.destMark.visible ? this.destMark.position.clone().setY(this.destMark.position.y + this.destMark.scale.y * 120) : null, 99)
     put('b:orbiter', this.mode === 'globe' && this.opts.orbiter ? this.orbiter.position : null, 20, () => {
       const c = cam.position, v = this.orbiter.position, d = v.clone().sub(c), t = -c.dot(d) / d.lengthSq()
       return t > 0 && t < 1 && c.clone().addScaledVector(d, t).length() < 0.999
@@ -1060,17 +1248,46 @@ export class ExplorerEngine {
 
     cand.sort((a, b) => b.pri - a.pri)
     const placed: [number, number, number, number][] = []
+    const ax = hostRect.left, ay = hostRect.top
     for (const c of cand) {
       const lw = c.el.offsetWidth || 60, lh = 22
-      // site labels sit up and to the right of their pin (see .xp-lbl.xs margins)
-      const box: [number, number, number, number] = c.el.classList.contains('xs') ? [c.x + 10, c.y - 24, c.x + 10 + lw, c.y - 24 + lh] : [c.x - lw / 2, c.y - lh / 2, c.x + lw / 2, c.y + lh / 2]
-      const ax = hostRect.left, ay = hostRect.top
-      const under = blocks.some((r) => box[2] + ax > r.left && box[0] + ax < r.right && box[3] + ay > r.top && box[1] + ay < r.bottom)
-      const clash = placed.some((q) => box[2] > q[0] - 4 && box[0] < q[2] + 4 && box[3] > q[1] - 2 && box[1] < q[3] + 2)
-      if (under || (clash && c.pri < 100)) { c.el.style.opacity = '0'; continue }
-      placed.push(box)
+      c.el.dataset.x = c.x.toFixed(1); c.el.dataset.y = c.y.toFixed(1)
+      // a label goes only when its own point is behind a panel; the panel simply covers any label text that runs under it
+      const px = c.x + ax, py = c.y + ay
+      if (blocks.some((r) => px > r.left && px < r.right && py > r.top && py < r.bottom)) { c.el.style.opacity = '0'; continue }
+      const site = c.el.classList.contains('xs')
+      // site names try the spots around their dot (right-up first) until one is free, so crowded pins all keep a name
+      const spots: [number, number][] = site
+        ? [[10, -24], [10, 2], [-10 - lw, -24], [-10 - lw, 2], [10, -48], [-10 - lw, -48], [10, 26], [-10 - lw, 26], [-lw / 2, -50], [-lw / 2, 28], [10, -72], [-10 - lw, -72], [10, 50], [-10 - lw, 50], [-62 - lw, -24], [-62 - lw, 2]]
+        : [[-lw / 2, -lh / 2]]
+      let chosen: [number, number] | null = null
+      // panels are translucent glass, so a label running under one would show through it: try spots clear of them
+      const covered = (box: [number, number, number, number]) => blocks.reduce((a, r) => a + Math.max(0, Math.min(box[2] + ax, r.right) - Math.max(box[0] + ax, r.left)) * Math.max(0, Math.min(box[3] + ay, r.bottom) - Math.max(box[1] + ay, r.top)), 0)
+      const underPanel = (box: [number, number, number, number]) => covered(box) > 0
+      for (const [ox, oy] of spots) {
+        const box: [number, number, number, number] = [c.x + ox, c.y + oy, c.x + ox + lw, c.y + oy + lh]
+        if (box[0] < 0 || box[2] > w || box[1] < 0 || box[3] > h || underPanel(box)) continue
+        const hit = placed.some((q) => box[0] < q[2] + 3 && box[2] + 3 > q[0] && box[1] < q[3] + 2 && box[3] + 2 > q[1])
+        if (!hit) { chosen = [ox, oy]; placed.push(box); break }
+      }
+      // the selected site and measure pins always show, even if they overlap something — clear of the panels if possible
+      if (!chosen && c.pri >= 95) {
+        // wedged between panels: the spot that leaves the least of the label under them (inside the view)
+        let best = Infinity
+        for (const [ox, oy] of spots) {
+          const box: [number, number, number, number] = [c.x + ox, c.y + oy, c.x + ox + lw, c.y + oy + lh]
+          if (box[0] < 0 || box[2] > w || box[1] < 0 || box[3] > h) continue
+          const a = covered(box)
+          if (a < best) { best = a; chosen = [ox, oy] }
+        }
+        chosen ??= spots[0]
+        placed.push([c.x + chosen[0], c.y + chosen[1], c.x + chosen[0] + lw, c.y + chosen[1] + lh])
+      }
+      if (!chosen) { c.el.style.opacity = '0'; continue }
       c.el.style.opacity = '1'
-      c.el.style.transform = `translate(${c.x.toFixed(1)}px, ${c.y.toFixed(1)}px)`
+      // site labels are positioned here (their CSS margin is zero); a label pushed away from its dot gets a faint leader tick
+      c.el.classList.toggle('moved', site && (chosen[0] !== 10 || chosen[1] !== -24))
+      c.el.style.transform = site ? `translate(${(c.x + chosen[0]).toFixed(1)}px, ${(c.y + chosen[1]).toFixed(1)}px)` : `translate(${c.x.toFixed(1)}px, ${c.y.toFixed(1)}px)`
     }
   }
 
@@ -1088,6 +1305,34 @@ export class ExplorerEngine {
   }
 
   // ------------------------------------------------------------------ input
+  /** Globe zoom heads for the cursor: the ground point under the cursor when the wheel turned stays under it. */
+  private zoomAnchor: { ndc: THREE.Vector2; p: THREE.Vector3; until: number } | null = null
+  private globeHit(ndc: THREE.Vector2): THREE.Vector3 | null {
+    const ray = new THREE.Raycaster(); ray.setFromCamera(ndc, this.globeCam)
+    const hit = ray.ray.intersectSphere(new THREE.Sphere(new THREE.Vector3(), 1), new THREE.Vector3())
+    return hit
+  }
+  private onWheelAnchor = (e: WheelEvent) => {
+    if (this.mode !== 'globe') return
+    const ndc = this.ndc(e), p = this.globeHit(ndc)
+    // keep the first anchor while the wheel keeps turning, so the spot does not drift
+    if (this.zoomAnchor && performance.now() < this.zoomAnchor.until && p) { this.zoomAnchor.ndc = ndc; this.zoomAnchor.until = performance.now() + 700 }
+    else this.zoomAnchor = p ? { ndc, p: p.normalize(), until: performance.now() + 700 } : null
+    // the controls have already applied this wheel step; put the spot back under the cursor at once
+    this.keepZoomAnchor()
+  }
+  private keepZoomAnchor() {
+    const a = this.zoomAnchor
+    if (!a || this.mode !== 'globe') return
+    if (performance.now() > a.until) { this.zoomAnchor = null; return }
+    const now = this.globeHit(a.ndc)
+    if (!now) return
+    const q = new THREE.Quaternion().setFromUnitVectors(now.normalize(), a.p)
+    if (Math.abs(q.w) > 0.9999999) return
+    this.globeCam.position.applyQuaternion(q)
+    this.globeCam.lookAt(0, 0, 0)
+    this.globeCtl.update()
+  }
   private ndc(e: { clientX: number; clientY: number }) {
     const r = this.renderer.domElement.getBoundingClientRect()
     return new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1)
@@ -1145,6 +1390,7 @@ export class ExplorerEngine {
     this.look.drag = null
     if (!this.down || Math.hypot(e.clientX - this.down[0], e.clientY - this.down[1]) > 5) return
     if (this.measuring) { const r = this.pickLatLon(e); if (r) this.addMeasurePoint(r[0], r[1]); return }
+    if (this.picking && this.mode === 'rover') { const r = this.pickLatLon(e); if (r) this.roverGoto(r[0], r[1], `Point ${Math.abs(r[0]).toFixed(3)}°${r[0] < 0 ? 'S' : 'N'} ${Math.abs(r[1]).toFixed(3)}°${r[1] < 0 ? 'W' : 'E'}`); return }
     const ray = new THREE.Raycaster()
     ray.setFromCamera(this.ndc(e), this.activeCam())
     const group = this.mode === 'globe' ? this.globeMarks : this.mode === 'map' && this.mapKind === 'global' ? this.mapMarks : this.terrMarks
@@ -1154,13 +1400,9 @@ export class ExplorerEngine {
     // tolerant pick: nearest site within 14 px
     const cam = this.activeCam(), w = this.host.clientWidth, h = this.host.clientHeight, r = this.renderer.domElement.getBoundingClientRect()
     let best: string | null = null, bd = 14
-    for (const s of this.sites) {
-      const el = this.labelEls.get('site:' + s.id)
-      if (!el || el.style.opacity === '0') continue
-      const m = /translate\(([-\d.]+)px, ([-\d.]+)px\)/.exec(el.style.transform)
-      if (!m) continue
-      const dd = Math.hypot(Number(m[1]) - (e.clientX - r.left), Number(m[2]) - (e.clientY - r.top))
-      if (dd < bd) { bd = dd; best = s.id }
+    for (const [id, [sx, sy]] of this.siteScreen) {
+      const dd = Math.hypot(sx - (e.clientX - r.left), sy - (e.clientY - r.top))
+      if (dd < bd) { bd = dd; best = id }
     }
     void cam; void w; void h
     if (best) this.cb.onSelect(best)
@@ -1179,6 +1421,12 @@ export class ExplorerEngine {
     const now = performance.now()
     if (now - this.hoverAt < 60) return
     this.hoverAt = now
+    {
+      const rc = this.renderer.domElement.getBoundingClientRect(), mx = e.clientX - rc.left, my = e.clientY - rc.top
+      let best: string | null = null, bd = 16
+      for (const [id, [sx, sy]] of this.siteScreen) { const dd = Math.hypot(sx - mx, sy - my); if (dd < bd) { bd = dd; best = id } }
+      if (best !== this.hoverSite) { this.hoverSite = best; this.renderer.domElement.style.cursor = best ? 'pointer' : this.picking || this.measuring ? 'crosshair' : '' }
+    }
     const r = this.pickLatLon(e)
     if (!r) { this.cb.onHover(null); return }
     const d = getMoonData()
@@ -1275,6 +1523,18 @@ export class ExplorerEngine {
   setVirtual(v: Partial<Virtual>) { this.input.virtual = { ...this.input.virtual, ...v } }
   get gamepad() { return this.input.gamepadName }
 
+  /** Drive to a place on autopilot, avoiding slopes the rover cannot climb. */
+  roverGoto(lat: number, lon: number, name: string) {
+    this.dest = { name, lat, lon, status: 'driving' }
+    this.picking = false
+    this.renderer.domElement.style.cursor = ''
+    this.sendRover(true)
+  }
+  roverStop() { this.dest = null; this.picking = false; this.renderer.domElement.style.cursor = ''; this.sendRover(true) }
+  roverPause(paused: boolean) { if (this.dest && this.dest.status !== 'arrived') { this.dest.status = paused ? 'paused' : 'driving'; this.sendRover(true) } }
+  /** Next click on the ground sets the destination. */
+  roverPick(on: boolean) { this.picking = on; this.renderer.domElement.style.cursor = on ? 'crosshair' : ''; this.sendRover(true) }
+
   roverAction(cmd: 'cam' | 'lights' | 'reset' | 'speed', value?: RoverSpeed) {
     const r = this.rover
     if (cmd === 'cam') { r.cam = r.cam === 'chase' ? 'mast' : 'chase'; this.look.yaw = 0; this.look.pitch = -0.08 }
@@ -1303,10 +1563,34 @@ export class ExplorerEngine {
   }
 
   private driveRover(dt: number, throttle: number, steer: number, brake = false) {
+    // (throttle and steer may be replaced by the autopilot below)
     const r = this.rover, p = this.terrain.patch
     if (!p || !this.frame) return
     const spec = ROVER_SPEEDS.find((s) => s.id === r.speed)!
     const vmax = spec.mps * spec.scale
+    // autopilot: when a destination is set and nobody is touching the controls, steer for it around steep ground
+    if (this.dest && this.dest.status === 'driving' && !throttle && !steer && !brake) {
+      const f = this.frame!, d = this.me(this.dest.lat, this.dest.lon)
+      const q = [d[0] * R_M - f.o[0], d[1] * R_M - f.o[1], d[2] * R_M - f.o[2]]
+      const de = dot(q, f.e) - r.e, dn = dot(q, f.n) - r.n, dist = Math.hypot(de, dn)
+      if (dist < Math.max(8, Math.abs(r.v) * 1.5)) { this.dest.status = 'arrived'; r.v = 0 }
+      else {
+        const want = Math.atan2(de, dn), L = Math.max(6, 3 * (p.spanM / p.n), Math.abs(r.v) * 1.2)
+        const h0 = this.terrain.surfaceY(r.e, r.n) * 1000
+        let pick: number | null = null
+        for (const off of [0, 15, -15, 30, -30, 45, -45, 60, -60, 90, -90, 120, -120]) {
+          const a = want + off * DEG
+          const h1 = this.terrain.surfaceY(r.e + Math.sin(a) * L, r.n + Math.cos(a) * L) * 1000
+          if (Math.abs(Math.atan((h1 - h0) / L) / DEG) < MAX_CLIMB_DEG - 3) { pick = a; break }
+        }
+        if (pick === null) { this.dest.status = 'blocked'; r.v = 0 }
+        else {
+          const diff = Math.atan2(Math.sin(pick - r.heading), Math.cos(pick - r.heading))
+          steer = Math.max(-1, Math.min(1, diff * 2.2))
+          throttle = Math.max(0.15, Math.min(1, dist / (vmax * 4 + 1))) * (Math.abs(diff) > 1.2 ? 0.25 : 1)
+        }
+      }
+    }
     // smooth acceleration; steering rate falls off at speed
     r.v += (throttle * vmax - r.v) * Math.min(1, dt * (brake ? 8 : 2.5))
     r.heading += steer * dt * 0.9
@@ -1385,6 +1669,19 @@ export class ExplorerEngine {
       lat: r.lat, lon: r.lon, elevM: p ? this.terrain.sample(p.h, r.e, r.n) : 0, slopeDeg: p ? this.terrain.sample(p.slope, r.e, r.n) : 0,
       headingDeg: ((r.heading / DEG) % 360 + 360) % 360, speedMps: Math.abs(r.v), timeScale: spec.scale, distM: r.dist,
       sunFrac: r.sunFrac, sunEl: r.sunEl, earthUp: r.earthUp, earthEl: r.earthEl, battery: r.battery, blocked: r.blocked, cam: r.cam, lights: r.lights,
+      picking: this.picking,
+      dest: this.dest ? (() => {
+        const d = this.dest!, f = this.frame
+        let distM = 0, bearingDeg = 0
+        if (f) {
+          const v = this.me(d.lat, d.lon), q = [v[0] * R_M - f.o[0], v[1] * R_M - f.o[1], v[2] * R_M - f.o[2]]
+          const de = dot(q, f.e) - r.e, dn = dot(q, f.n) - r.n
+          distM = Math.hypot(de, dn); bearingDeg = ((Math.atan2(de, dn) / DEG) + 360) % 360
+          // beyond the loaded square the local frame bends away; use the great circle instead
+          if (distM > (this.terrain.patch?.spanM ?? 0) / 2) { const a = this.me(r.lat, r.lon); distM = Math.acos(Math.max(-1, Math.min(1, dot(a, v)))) * R_M }
+        }
+        return { name: d.name, lat: d.lat, lon: d.lon, distM, bearingDeg, etaS: distM / Math.max(spec.mps * spec.scale, 1e-6), status: d.status }
+      })() : null,
     })
   }
 
@@ -1490,7 +1787,7 @@ export class ExplorerEngine {
         this.setStatus({ stay: { done: this.terrain.stayDone, total: this.terrain.stayTotal } })
       } else if (this.detail.stayPending) this.detail.stepStay(this.renderer, 2, (ms) => this.localVectors(ms))
       this.updateContextGlobe()
-      if (now - this.lodAt > 350) { this.lodAt = now; this.updateLod() }
+      if (now - this.lodAt > 350) { this.lodAt = now; this.updateLod(); this.updateImagery() }
       this.sky.group.visible = this.mode === 'drone' || this.mode === 'surface' || this.mode === 'pole' || this.mode === 'rover'
       this.sky.update(this.terrCam, this.sunDirScene, this.earthDirScene, this.sunR, this.earthR)
       this.terrMarks.visible = this.mode !== 'surface' && this.mode !== 'rover'
@@ -1508,6 +1805,18 @@ export class ExplorerEngine {
     this.paths.visible = (this.mode === 'surface' || this.mode === 'rover') && this.opts.paths && terr
     if (this.paths.visible) { if (!this.pathKey) this.buildPaths(); this.paths.position.copy(this.terrCam.position) }
     this.updateAstronaut(tt)
+    this.destMark.visible = false
+    if (this.mode === 'rover' && this.dest && this.frame && this.terrain.patch) {
+      const f = this.frame, v = this.me(this.dest.lat, this.dest.lon), q = [v[0] * R_M - f.o[0], v[1] * R_M - f.o[1], v[2] * R_M - f.o[2]]
+      const e = dot(q, f.e), n = dot(q, f.n)
+      if (this.terrain.contains(e, n)) {
+        this.destMark.visible = true
+        this.destMark.position.set(e / 1000, this.terrain.surfaceY(e, n), -n / 1000)
+        // grow with distance so it can be seen from far away
+        const k = Math.max(0.001, this.terrCam.position.distanceTo(this.destMark.position) * 0.0004)
+        this.destMark.scale.setScalar(k)
+      }
+    }
     const showOrb = this.mode === 'globe' && this.opts.orbiter
     this.orbiter.visible = this.orbitRing.visible = showOrb
     if (showOrb) {
@@ -1522,6 +1831,7 @@ export class ExplorerEngine {
       this.orbitRing.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), nrm)
     }
     for (const c of [this.globeCtl, this.terrCtl, this.mapCtl, this.poleTopCtl]) if (c.enabled) c.update()
+    this.keepZoomAnchor()
     if (!terr && performance.now() - this.lodAt > 400) { this.lodAt = performance.now(); this.updateImagery() }
     if (this.lighting === 'full' && this.mode === 'globe') {
       // light from just above and beside the viewer: the whole visible face is lit, with enough slant to read relief

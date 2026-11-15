@@ -1,11 +1,11 @@
 /// <reference lib="webworker" />
-import { loadMoonData, makeSampler } from '../moonData'
+import { loadMoonData, makeSampler, setMoonData, type MoonData } from '../moonData'
 
 /** lat/lon: origin of the local frame. ce/cn: centre of the square in that frame (metres east/north), for detail patches. */
-export interface PatchRequest { id: number; base: string; lat: number; lon: number; spanM: number; n: number; ce?: number; cn?: number; tag?: string }
+export interface PatchRequest { id: number; base: string; lat: number; lon: number; spanM: number; n: number; ce?: number; cn?: number; tag?: string; key?: string; warm?: boolean }
 export interface PatchResult {
   id: number; ok: boolean; error?: string
-  n: number; spanM: number; lat: number; lon: number; ce: number; cn: number; tag?: string
+  n: number; spanM: number; lat: number; lon: number; ce: number; cn: number; tag?: string; key?: string
   /** Height of each cell above the origin's tangent plane, metres, curvature included (row 0 = north edge). */
   z: Float32Array
   /** Height above the 1737.4 km sphere, metres. */
@@ -18,11 +18,14 @@ export interface PatchResult {
 const R = 1737400
 const DEG = Math.PI / 180
 
-self.onmessage = async (ev: MessageEvent<PatchRequest>) => {
-  const { id, base, lat, lon, spanM, n, tag } = ev.data
-  const ce = ev.data.ce ?? 0, cn = ev.data.cn ?? 0
+self.onmessage = async (ev: MessageEvent<PatchRequest | { init: MoonData }>) => {
+  if ('init' in ev.data) { setMoonData(ev.data.init); return }
+  const { id, base, lat, lon, spanM, n, tag, key } = ev.data
+  const req = ev.data
+  const ce = req.ce ?? 0, cn = req.cn ?? 0
   try {
     const data = await loadMoonData(base)
+    if (req.warm) return // just load the elevation files so the first real request starts at once
     const s = makeSampler(data)
     if (!s) throw new Error('No elevation data installed')
     const la = lat * DEG, lo = lon * DEG
@@ -37,8 +40,8 @@ self.onmessage = async (ev: MessageEvent<PatchRequest>) => {
       for (let i = 0; i < n; i++) {
         const east = ce + (i + 0.5) * cell - spanM / 2
         const qx = u[0] * R + e[0] * east + nn[0] * north, qy = u[1] * R + e[1] * east + nn[1] * north, qz = u[2] * R + e[2] * east + nn[2] * north
-        const q = Math.hypot(qx, qy, qz), dx = qx / q, dy = qy / q, dz = qz / q
-        let hv = s.height(Math.asin(dz) / DEG, Math.atan2(dy, dx) / DEG)
+        const q = Math.sqrt(qx * qx + qy * qy + qz * qz), dx = qx / q, dy = qy / q, dz = qz / q
+        let hv = s.heightVec(dx, dy, dz)
         if (isNaN(hv)) hv = 0
         const k = j * n + i
         h[k] = hv
@@ -51,11 +54,11 @@ self.onmessage = async (ev: MessageEvent<PatchRequest>) => {
       const a = h[j * n + Math.max(0, i - 1)], b = h[j * n + Math.min(n - 1, i + 1)]
       const c = h[Math.max(0, j - 1) * n + i], d = h[Math.min(n - 1, j + 1) * n + i]
       const gx = (b - a) / (2 * cell), gy = (c - d) / (2 * cell)
-      slope[j * n + i] = Math.atan(Math.hypot(gx, gy)) / DEG
+      slope[j * n + i] = Math.atan(Math.sqrt(gx * gx + gy * gy)) / DEG
     }
-    const res: PatchResult = { id, ok: true, n, spanM, lat, lon, ce, cn, tag, z, h, slope, minH, maxH, resM: Math.max(cell, s.resolution(lat)), source: s.describe(lat) }
+    const res: PatchResult = { id, ok: true, n, spanM, lat, lon, ce, cn, tag, key, z, h, slope, minH, maxH, resM: Math.max(cell, s.resolution(lat)), source: s.describe(lat) }
     ;(self as unknown as Worker).postMessage(res, [z.buffer, h.buffer, slope.buffer])
   } catch (err) {
-    ;(self as unknown as Worker).postMessage({ id, ok: false, tag, error: (err as Error).message })
+    ;(self as unknown as Worker).postMessage({ id, ok: false, tag, key, error: (err as Error).message })
   }
 }

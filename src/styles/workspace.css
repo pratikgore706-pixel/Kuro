@@ -1,0 +1,114 @@
+/*
+ * Workspace design tokens (Explorer, Mission, Compare, Reports, Methods). The landing page sits outside `.app`
+ * and keeps its own look.
+ *
+ * Colour carries meaning, nothing else does: gold is the Sun (power), blue is Earth (radio), coral is a
+ * problem. Selection and main actions are ivory, so the data colours are never diluted by chrome.
+ */
+.app {
+  --night: #060a14;
+  --ink: #0d1326;
+  --ink-2: #131b34;
+  --ink-3: #1a2343;
+  --hair: rgba(226, 230, 245, 0.09);
+  --hair-2: rgba(226, 230, 245, 0.16);
+  --hair-3: rgba(226, 230, 245, 0.3);
+  --text: #eeece6;
+  --text-2: #a9aec0;
+  --text-3: #737a93;
+  --sun: #f2c46d;
+  --sun-ink: #241904;
+  --earth: #8cc8ff;
+  --alert: #ff8070;
+  --ivory: #f4f1e8;
+  --ivory-ink: #0d1326;
+
+  /* the older names every page already uses, pointed at the new palette and type */
+  --bg: var(--night); --bg-2: #0b1122; --panel: var(--ink); --panel-2: #121a32;
+  --line: var(--hair); --line-2: var(--hair-2);
+  --muted: var(--text-2); --faint: var(--text-3);
+  --amber: var(--sun); --amber-ink: var(--sun-ink); --blue: var(--earth); --red: var(--alert); --violet: #9aa3ff;
+  --sans: 'Mona Sans', system-ui, sans-serif;
+  --serif: 'Mona Sans', system-ui, sans-serif;
+  --mono: 'Mona Sans', system-ui, sans-serif;
+  --r: 12px;
+
+  grid-template-rows: minmax(0, 1fr);
+  grid-template-columns: 64px minmax(0, 1fr);
+  background: var(--night);
+  color: var(--text);
+  font-family: var(--sans);
+}
+.app input, .app select, .app textarea { color-scheme: dark; }
+.app ::selection { background: rgba(244, 241, 232, 0.24); }
+
+/* ---------- navigation rail (left; along the bottom on phones) ---------- */
+.app .rail { position: sticky; top: 0; z-index: 60; align-self: start; height: 100vh; height: 100dvh; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 14px 0 12px; background: linear-gradient(90deg, #0b1122, #080d1a); border-right: 1px solid var(--hair); }
+.app .rail-pages { display: flex; flex-direction: column; gap: 6px; margin-top: 14px; }
+.app .rail-clock { margin-top: auto; }
+.app .rail-item { position: relative; display: grid; place-items: center; width: 44px; height: 44px; border-radius: 12px; color: var(--text-2); transition: background 0.15s, color 0.15s; cursor: pointer; }
+.app .rail-item:hover { background: rgba(255, 255, 255, 0.06); color: var(--text); }
+.app .rail-item:focus-visible { outline: 2px solid var(--ivory); outline-offset: 2px; }
+.app .rail-item.active { background: var(--ivory); color: var(--ivory-ink); }
+.app .rail-item.active::before { content: ''; position: absolute; left: -10px; top: 10px; bottom: 10px; width: 3px; border-radius: 0 3px 3px 0; background: var(--ivory); }
+.app .rail-home:hover { background: rgba(242, 196, 109, 0.1); }
+.app .rail-clock { cursor: default; color: var(--text-3); }
+/* the floating name tag */
+.app .rail-tip { position: absolute; left: calc(100% + 12px); top: 50%; transform: translate(-4px, -50%); padding: 6px 11px; border: 1px solid var(--hair-2); border-radius: 8px; background: #121a32; color: var(--text); font: 500 12.5px/1.2 var(--sans); white-space: nowrap; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45); opacity: 0; pointer-events: none; transition: opacity 0.12s, transform 0.12s; }
+.app .rail-tip::before { content: ''; position: absolute; left: -5px; top: 50%; width: 8px; height: 8px; background: inherit; border-left: 1px solid var(--hair-2); border-bottom: 1px solid var(--hair-2); transform: translateY(-50%) rotate(45deg); }
+.app .rail-item:hover .rail-tip, .app .rail-item:focus-visible .rail-tip { opacity: 1; transform: translate(0, -50%); }
+.app .rail-clock .rail-tip { font-variant-numeric: tabular-nums; }
+
+/* phones: no hover and no room for a column, so the same icons sit in a bar along the bottom */
+@media (max-width: 760px) {
+  .app { grid-template-columns: minmax(0, 1fr); padding-bottom: 58px; }
+  .app .rail { position: fixed; inset: auto 0 0 0; top: auto; height: 58px; flex-direction: row; justify-content: space-around; gap: 0; padding: 0 6px env(safe-area-inset-bottom); border-right: 0; border-top: 1px solid var(--hair); background: #0a0f1e; }
+  .app .rail-pages { flex-direction: row; gap: 4px; margin: 0; }
+  .app .rail-clock, .app .rail-tip, .app .rail-item.active::before { display: none; }
+  .app .rail-item { width: 46px; height: 42px; }
+}
+
+/* the other workspace pages: headlines in the wide cut, so they match the Explorer until they get their own pass */
+.app .pagehead h1, .app .prose h1 { font-weight: 300; font-stretch: 118%; letter-spacing: -0.015em; }
+.app .prose h2, .app .slipwrap h2, .app .ms-form h2, .app .ms-results h2, .app .ms-name h3, .app .skywrap h2 { font-weight: 400; font-stretch: 112%; }
+
+/* ---------- Compare: scenarios side by side ---------- */
+.app .sbs { margin: 0 0 30px; }
+.app .sbs-head h2 { font: 600 22px/1.2 var(--sans); font-stretch: 112%; margin: 0 0 6px; }
+.app .sbs-head .lede { max-width: 78ch; }
+.app .sbs-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; margin: 14px 0 12px; padding: 10px 12px; border: 1px solid var(--hair); border-radius: 14px; background: var(--ink); }
+.app .sbs-bar .btn.icon { width: 36px; height: 36px; border-radius: 50%; }
+.app .sbs-bar .btn.primary.icon { width: 42px; height: 42px; }
+.app .sbs-bar .btn.icon.on { background: var(--ivory); color: var(--ivory-ink); border-color: var(--ivory); }
+.app .sbs-bar select { width: 84px; height: 36px; font-size: 12.5px; }
+.app .sbs-range { flex: 1 1 220px; min-width: 160px; accent-color: var(--ivory); }
+.app .sbs-t { font-size: 12.5px; color: var(--text-2); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.app .sbs-t b { color: var(--text); font-weight: 600; }
+.app .sbs-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 330px), 1fr)); gap: 12px; }
+.app .sbs-card { min-width: 0; padding: 14px 14px 12px; border: 1px solid var(--hair); border-radius: 14px; background: var(--ink); transition: opacity 0.2s; }
+.app .sbs-card.over { opacity: 0.6; }
+.app .sbs-card > header { display: flex; gap: 10px; align-items: start; margin-bottom: 10px; }
+.app .sbs-card h3 { font: 600 15px/1.25 var(--sans); font-stretch: 110%; margin: 0; }
+.app .sbs-card header p { margin: 2px 0 0; font-size: 11.5px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.app .sbs-letter { flex: none; display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: var(--ivory); color: var(--ivory-ink); font-weight: 700; font-size: 12.5px; }
+.app .sbs-sky { height: 132px; border: 1px solid var(--hair); border-radius: 10px; overflow: hidden; background: linear-gradient(180deg, rgba(14, 21, 44, 0.2), rgba(26, 36, 70, 0.45)); }
+.app .sbs-sky svg { display: block; }
+.app .sbs-ground { fill: #10172f; }
+.app .sbs-trk { fill: none; stroke-width: 1.6; stroke-linejoin: round; stroke-linecap: round; }
+.app .sbs-trk.sun { stroke: var(--sun); } .app .sbs-trk.earth { stroke: var(--earth); }
+.app .sbs-trk.off { stroke-width: 1.1; opacity: 0.3; stroke-dasharray: 2 3; }
+.app .hs-sun.dim { fill: #6d5a35; } .app .hs-earth.dim { fill: #1b2f52; }
+.app .sbs-now { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 10px 0 8px; }
+.app .sbs-now > div { padding: 7px 10px; border: 1px solid var(--hair); border-radius: 10px; }
+.app .sbs-now dt { font-size: 11.5px; font-weight: 600; color: var(--text-3); }
+.app .sbs-now dd { margin: 2px 0 0; font-size: 12.5px; color: var(--text-2); }
+.app .sbs-now .sun.up { border-color: rgba(242, 196, 109, 0.45); } .app .sbs-now .sun.up dt { color: var(--sun); } .app .sbs-now .sun.up dd { color: var(--text); }
+.app .sbs-now .earth.up { border-color: rgba(140, 200, 255, 0.45); } .app .sbs-now .earth.up dt { color: var(--earth); } .app .sbs-now .earth.up dd { color: var(--text); }
+.app .sbs-sofar { display: grid; gap: 5px; }
+.app .sbs-sofar > div { display: grid; grid-template-columns: 128px minmax(0, 1fr) 36px; align-items: center; gap: 8px; font-size: 11.5px; color: var(--text-3); }
+.app .sbs-sofar i { display: block; height: 5px; border-radius: 99px; background: rgba(255, 255, 255, 0.07); overflow: hidden; }
+.app .sbs-sofar b { display: block; height: 100%; border-radius: 99px; }
+.app .sbs-sofar b.sun { background: var(--sun); } .app .sbs-sofar b.earth { background: var(--earth); }
+.app .sbs-sofar em { font-style: normal; text-align: right; color: var(--text); font-variant-numeric: tabular-nums; }
+.app .sbs-over { margin: 8px 0 0; font-size: 11.5px; color: var(--text-3); }
+@media (max-width: 760px) { .app .sbs-sofar > div { grid-template-columns: 112px minmax(0, 1fr) 34px; } }

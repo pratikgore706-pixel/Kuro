@@ -48,6 +48,15 @@ export function fmtDuration(ms: number): string {
   if (h > 0) return `${h}h ${p2(mm)}m`
   return `${mm}m`
 }
+/** "14:30" (UTC) — the value format an <input type="time"> uses. */
+export const fmtTimeOfDay = (ms: number) => fmtUtc(ms).slice(11, 16)
+/** Parse "HH:MM" into milliseconds after midnight; null if it isn't a valid time. */
+export function parseTimeOfDay(v: string): number | null {
+  const m = /^(\d{1,2}):(\d{2})/.exec(v)
+  if (!m) return null
+  const h = Number(m[1]), mi = Number(m[2])
+  return h < 24 && mi < 60 ? h * HOUR + mi * 60000 : null
+}
 export function fmtHours(h: number): string {
   if (!isFinite(h)) return '—'
   if (h <= 0) return 'none'

@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { DETAIL_GLSL, detailUniforms } from './DetailImagery'
+import { PSR_GLSL, psrUniforms } from './NasaLayers'
 import { COMMON, LOG_DEPTH_FRAG, LOG_DEPTH_FRAG_PARS, LOG_DEPTH_VERT, LOG_DEPTH_VERT_PARS } from './glsl'
 
 /**
@@ -47,8 +48,9 @@ vec4 sampleEq(sampler2D t, vec2 uv) {
   float u2 = fract(uv.x + 0.5) - 0.5;
   vec2 dx1 = dFdx(uv), dy1 = dFdy(uv);
   vec2 dx2 = vec2(dFdx(u2), dx1.y), dy2 = vec2(dFdy(u2), dy1.y);
-  if (max(abs(dx2.x), abs(dy2.x)) < max(abs(dx1.x), abs(dy1.x))) return textureGrad(t, vec2(u2, uv.y), dx2, dy2);
-  return textureGrad(t, uv, dx1, dy1);
+  // choose, then sample once (a single return keeps Windows / Direct3D shader compilers happy)
+  bool alt = max(abs(dx2.x), abs(dy2.x)) < max(abs(dx1.x), abs(dy1.x));
+  return textureGrad(t, alt ? vec2(u2, uv.y) : uv, alt ? dx2 : dx1, alt ? dy2 : dy1);
 }
 
 void main() {
@@ -109,6 +111,7 @@ void main() {
     col = lit + tint * 0.12 * (night + earthshine * vec3(0.4, 0.5, 0.8));
   }
   else if (layer == 0) col = albedo * (light * 1.25 * warm + night);
+  else if (layer == 9) col = psrOverlay(albedo * (0.58 + 0.3 * max(dot(N, V), 0.0)), psrAt(degrees(lat), degrees(lon)), 0.85);
   else if (layer == 1) col = vec3(0.72) * (light * 1.25 * warm + night);
   else if (layer == 2) col = rampElevation((h - uMinH) / (uMaxH - uMinH)) * relief;
   else if (layer == 3) col = rampSlope(slope / 40.0) * relief;
@@ -146,11 +149,12 @@ export class Globe {
     uGrid: { value: 1 }, uLayer: { value: 0 }, uFlat: { value: 1 },
     uCamObj: { value: new THREE.Vector3(0, 0, 4) }, uClip: { value: new THREE.Vector4(0, 0, 0, 0) },
     ...detailUniforms(),
+    ...psrUniforms(),
     uSun: { value: new THREE.Vector3(0, 0, 1) }, uLight: { value: new THREE.Vector3(0, 0, 1) }, uEarthPos: { value: new THREE.Vector3(0, 0, 220) },
   }
 
   constructor(segments = 640) {
-    const mat = new THREE.ShaderMaterial({ uniforms: this.uniforms, vertexShader: LOG_DEPTH_VERT_PARS + COMMON + vert, fragmentShader: LOG_DEPTH_FRAG_PARS + COMMON + DETAIL_GLSL + frag })
+    const mat = new THREE.ShaderMaterial({ uniforms: this.uniforms, vertexShader: LOG_DEPTH_VERT_PARS + COMMON + vert, fragmentShader: LOG_DEPTH_FRAG_PARS + COMMON + DETAIL_GLSL + PSR_GLSL + frag })
     this.mesh = new THREE.Mesh(new THREE.SphereGeometry(1, segments, segments / 2), mat)
   }
 

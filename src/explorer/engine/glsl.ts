@@ -1,6 +1,6 @@
 /** Shared GLSL: colour scales for each data layer, lunar photometry, and the solar-disc visibility formula. */
 
-export const LAYER_IDS = ['imagery', 'relief', 'elevation', 'slope', 'sun', 'earth', 'sunStay', 'earthStay', 'colour'] as const
+export const LAYER_IDS = ['imagery', 'relief', 'elevation', 'slope', 'sun', 'earth', 'sunStay', 'earthStay', 'colour', 'psr'] as const
 export type LayerId = (typeof LAYER_IDS)[number]
 export const layerIndex = (id: LayerId) => LAYER_IDS.indexOf(id)
 
@@ -39,10 +39,10 @@ ${ramp('rampEarth', RAMPS.earth)}
 ${ramp('rampStay', RAMPS.stay)}
 
 // Fraction of a disc above a straight horizon; x = (centre elevation − horizon) / angular radius.
+// Clamping gives exactly 1 above +1 and 0 below −1; one return keeps Windows (Direct3D) shader compilers happy.
 float discFraction(float x) {
-  if (x >= 1.0) return 1.0;
-  if (x <= -1.0) return 0.0;
-  return 0.5 + (x * sqrt(1.0 - x * x) + asin(x)) / PI;
+  float c = clamp(x, -1.0, 1.0);
+  return 0.5 + (c * sqrt(1.0 - c * c) + asin(c)) / PI;
 }
 
 // Lunar photometry: blend of Lambert and Lommel–Seeliger, which keeps the Moon's limb bright like the real one.

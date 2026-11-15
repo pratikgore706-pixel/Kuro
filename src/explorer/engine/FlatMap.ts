@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { DETAIL_GLSL, detailUniforms } from './DetailImagery'
+import { PSR_GLSL, psrUniforms } from './NasaLayers'
 import { COMMON, LOG_DEPTH_FRAG, LOG_DEPTH_FRAG_PARS, LOG_DEPTH_VERT, LOG_DEPTH_VERT_PARS } from './glsl'
 
 /**
@@ -40,6 +41,7 @@ void main() {
   vec3 col;
   if (layer == 8) col = rampElevation((h - uMinH) / (uMaxH - uMinH)) * (0.6 + 0.6 * dot(albedo, vec3(0.333))) * relief * mix(0.3, 1.15, day);
   else if (layer == 0) col = albedo * relief * mix(0.22, 1.12, day);
+  else if (layer == 9) col = psrOverlay(albedo * relief * 1.05, psrAt(degrees(lat), degrees(lon)), 0.85);
   else if (layer == 1) col = vec3(0.7) * relief * mix(0.22, 1.12, day);
   else if (layer == 2) col = rampElevation((h - uMinH) / (uMaxH - uMinH)) * relief;
   else if (layer == 3) col = rampSlope(slope / 40.0) * relief;
@@ -66,10 +68,11 @@ export class FlatMap {
     uHeight: { value: null as THREE.Texture | null }, uHasHeight: { value: 0 },
     uMinH: { value: -9000 }, uMaxH: { value: 10000 }, uLayer: { value: 0 }, uGrid: { value: 1 }, uFull: { value: 0 },
     ...detailUniforms(),
+    ...psrUniforms(),
     uSunME: { value: new THREE.Vector3(1, 0, 0) }, uEarthME: { value: new THREE.Vector3(220, 0, 0) },
   }
   constructor() {
-    this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(4, 2), new THREE.ShaderMaterial({ uniforms: this.uniforms, vertexShader: LOG_DEPTH_VERT_PARS + vert, fragmentShader: LOG_DEPTH_FRAG_PARS + COMMON + DETAIL_GLSL + frag }))
+    this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(4, 2), new THREE.ShaderMaterial({ uniforms: this.uniforms, vertexShader: LOG_DEPTH_VERT_PARS + vert, fragmentShader: LOG_DEPTH_FRAG_PARS + COMMON + DETAIL_GLSL + PSR_GLSL + frag }))
   }
   dispose() { this.mesh.geometry.dispose(); this.mesh.material.dispose() }
 }

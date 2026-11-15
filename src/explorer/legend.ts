@@ -10,7 +10,8 @@ export const LAYERS: LayerDef[] = [
   { id: 'slope', group: 'surface', label: 'Slope', hint: 'Surface slope from LOLA. Beyond about 15° is hazardous for most landers.', ramp: 'slope', legend: ['0°', '40°+'] },
   { id: 'sun', group: 'mission', label: 'Sunlit now', hint: 'How much of the Sun’s disc is visible at the chosen time. Terrain views include shadows cast by the terrain.', ramp: 'sun', legend: ['Dark', 'Full Sun'] },
   { id: 'earth', group: 'mission', label: 'Earth in view', hint: 'Where Earth is above the local horizon, so a direct radio link is possible.', ramp: 'earth', legend: ['Hidden', 'In view'] },
-  { id: 'sunStay', group: 'mission', label: 'Sun over stay', hint: 'Average share of the Sun visible across the whole stay, with terrain shadows.', ramp: 'stay', legend: ['0%', '100%'], terrainOnly: true },
+  { id: 'psr', group: 'mission', label: 'NASA shadowed regions', hint: 'NASA’s own map of permanently shadowed regions at the South Pole (LOLA team, 240 m), loaded live from Moon Trek. These craters never see the Sun. The ground beneath is lit evenly, and outlines are smoothed, so pits under about 1 km across are not drawn. The same outlines are drawn over “Sun over stay” so you can check KURO’s shadow tracing against NASA.', swatch: 'linear-gradient(90deg,#1b2a3a,#52c7ff,#c0f0ff)' },
+  { id: 'sunStay', group: 'mission', label: 'Sun over stay', hint: 'Average share of the Sun visible across the whole stay, with terrain shadows. White outlines are NASA’s permanently shadowed regions: KURO should find no sunlight inside them.', ramp: 'stay', legend: ['0%', '100%'], terrainOnly: true },
   { id: 'earthStay', group: 'mission', label: 'Earth over stay', hint: 'Share of the stay with Earth above the terrain horizon.', ramp: 'earth', legend: ['0%', '100%'], terrainOnly: true },
 ]
 

@@ -1,4 +1,6 @@
 import * as THREE from 'three'
+import { PSR_GLSL, psrUniforms } from './NasaLayers'
+import { DETAIL_GLSL, detailUniforms } from './DetailImagery'
 import { COMMON, LOG_DEPTH_FRAG, LOG_DEPTH_FRAG_PARS, LOG_DEPTH_VERT, LOG_DEPTH_VERT_PARS } from './glsl'
 import type { PatchResult } from './patchWorker'
 
@@ -12,7 +14,7 @@ const quadVert = /* glsl */ `varying vec2 vUv; void main() { vUv = uv; gl_Positi
 
 const visFrag = /* glsl */ `
 uniform sampler2D uZ, uZB;
-uniform float uSpan, uN, uSunR, uHasB, uSpanB;
+uniform float uSpan, uN, uSunR, uHasB, uSpanB, uSteps;
 uniform vec2 uC, uCB;   // centres of this square and of the base square in the shared frame, metres (east, north)
 uniform vec3 uSun;    // unit vector to the Sun, local (east, north, up) at the frame origin
 uniform vec3 uEarth;  // Earth position relative to the frame origin, metres, same axes
@@ -21,16 +23,20 @@ const float RM = 1737400.0;
 
 vec3 P(vec2 uv) { return vec3(uC.x + (uv.x - 0.5) * uSpan, uC.y + (0.5 - uv.y) * uSpan, texture(uZ, uv).r); }
 
-// terrain height (frame z, metres) at frame position xy: this square first, then the larger base square around it
+// terrain height (frame z, metres) at frame position xy: this square first, then the larger base square around it.
+// Called inside a loop, so it samples at an explicit level (textureLod) and returns once — both keep Windows
+// (Direct3D) shader compilers from rejecting the optimised build.
 bool heightAt(vec2 xy, out float z) {
-  vec2 uv = vec2((xy.x - uC.x) / uSpan + 0.5, 0.5 - (xy.y - uC.y) / uSpan);
-  if (uv.x >= 0.0 && uv.y >= 0.0 && uv.x <= 1.0 && uv.y <= 1.0) { z = texture(uZ, uv).r; return true; }
-  if (uHasB > 0.5) {
-    vec2 ub = vec2((xy.x - uCB.x) / uSpanB + 0.5, 0.5 - (xy.y - uCB.y) / uSpanB);
-    if (ub.x >= 0.0 && ub.y >= 0.0 && ub.x <= 1.0 && ub.y <= 1.0) { z = texture(uZB, ub).r; return true; }
-  }
   z = 0.0;
-  return false;
+  bool ok = false;
+  vec2 uv = vec2((xy.x - uC.x) / uSpan + 0.5, 0.5 - (xy.y - uC.y) / uSpan);
+  if (uv.x >= 0.0 && uv.y >= 0.0 && uv.x <= 1.0 && uv.y <= 1.0) {
+    z = textureLod(uZ, uv, 0.0).r; ok = true;
+  } else if (uHasB > 0.5) {
+    vec2 ub = vec2((xy.x - uCB.x) / uSpanB + 0.5, 0.5 - (xy.y - uCB.y) / uSpanB);
+    if (ub.x >= 0.0 && ub.y >= 0.0 && ub.x <= 1.0 && ub.y <= 1.0) { z = textureLod(uZB, ub, 0.0).r; ok = true; }
+  }
+  return ok;
 }
 
 // highest terrain elevation angle (radians) seen from f along the horizontal direction dir
@@ -39,6 +45,7 @@ float horizon(vec3 f, vec3 up, vec2 dir) {
   float best = -1.6;
   float d = cell;
   for (int i = 0; i < 280; i++) {
+    if (float(i) >= uSteps) break;
     vec2 xy = f.xy + dir * d;
     float z;
     if (!heightAt(xy, z)) break;
@@ -92,6 +99,8 @@ uniform vec3 uSunScene, uEarthScene, uSel, uLampPos, uLampDir;
 uniform float uLamp, uGrain, uFull, uSelR;
 uniform vec4 uHole;      // (x, z, half-width) in scene km of a finer square drawn over this one; w > 0.5 enables
 uniform vec3 uLightScene; // Full Moon mode: an even high light with no cast shadows
+uniform vec3 uFrE, uFrN, uFrU; // the frame's east, north and up axes in Moon body-fixed coordinates (for latitude/longitude)
+uniform sampler2D uColor; uniform float uHasColor; // global LRO WAC mosaic; NASA Moon Trek tiles sharpen it where you look
 const float RKM = 1737.4;
 
 float hash2(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
@@ -146,6 +155,10 @@ void main() {
   vec3 nl = vec3(N.x, -N.z, N.y);
   vec3 V = normalize(cameraPosition - vWorld);
   vec4 vis = texture(uVis, vUv);
+  // latitude and longitude of this point (Moon body-fixed), for NASA imagery and the shadowed-region map
+  vec3 qme = uFrU * (RKM * 1000.0 + vWorld.y * 1000.0) + uFrE * (vWorld.x * 1000.0) - uFrN * (vWorld.z * 1000.0);
+  float latD = degrees(asin(clamp(qme.z / length(qme), -1.0, 1.0))), lonD = degrees(atan(qme.y, qme.x));
+  vec2 eqUV = vec2((lonD + 180.0) / 360.0, (90.0 - latD) / 180.0);
   float relief = hillshade(nl);
   float sunLight = uFull > 0.5 ? max(dot(N, uLightScene), 0.0) * 0.72 : lunarShade(dot(N, uSunScene), dot(N, V)) * vis.r;
   float earthshine = 0.03 * max(dot(N, uEarthScene), 0.0) * vis.g;
@@ -156,8 +169,15 @@ void main() {
   if (layer == 8) {
     vec3 tint = rampElevation((vH - uMinH) / (uMaxH - uMinH));
     col = tint * (sunLight * 1.6 * warm + shade * 2.6 + 0.02);
-  } else if (layer <= 1) {
-    col = vec3(0.68, 0.665, 0.64) * (sunLight * 1.55 * warm) + shade;
+  } else if (layer <= 1 || layer == 9) {
+    if (uHasColor > 0.5) {
+      // the real Moon: NASA's LRO photo (sharper tiles as you zoom), lit by the real Sun with KURO's traced shadows;
+      // shadowed ground keeps a little of the photo so the terrain stays legible
+      vec3 photo = detailAlbedo(textureLod(uColor, eqUV, 0.0).rgb, eqUV).rgb;
+      col = photo * (0.2 + sunLight * 1.25) * warm * 1.15 + shade * 0.6;
+      // under NASA's shadowed regions the ground is lit evenly: the layer is about permanent shadow, not today's Sun
+      if (layer == 9) col = photo * (0.58 + 0.3 * max(dot(N, V), 0.0));
+    } else col = vec3(0.68, 0.665, 0.64) * (layer == 9 ? vec3(0.58 + 0.3 * max(dot(N, V), 0.0)) : sunLight * 1.55 * warm) + shade;
   } else if (layer == 2) col = rampElevation((vH - uMinH) / (uMaxH - uMinH)) * relief;
   else if (layer == 3) col = rampSlope(vSlope / 40.0) * relief;
   else if (layer == 4) col = rampSun(vis.r * 0.85 + sunLight * 0.3) * (0.55 + 0.45 * relief);
@@ -165,6 +185,11 @@ void main() {
   else if (layer == 6) col = rampStay(texture(uStay, vUv).r / max(uStayN, 1.0)) * (0.65 + 0.35 * relief);
   else col = rampEarth(texture(uStay, vUv).g / max(uStayN, 1.0)) * (0.65 + 0.35 * relief);
 
+  // NASA's permanently shadowed regions: its own layer, and drawn as outlines over KURO's Sun-over-stay as a cross-check
+  if (uHasPsr > 0.5 && (layer == 9 || layer == 6)) {
+    float p = psrAt(latD, lonD);
+    col = psrOverlay(col + (layer == 9 ? 0.03 : 0.0), p, layer == 9 ? 0.85 : 0.0);
+  }
   if (uGrain > 0.5) col *= 0.9 + 0.2 * vnoise(m.xz / 7.0) * (1.0 - smoothstep(0.2, 1.0, fw / 7.0)) + 0.06 * (vnoise(m.xz / 90.0) - 0.5);
   if (uLamp > 0.5) {
     // rover headlights: a soft cone, inverse-square falloff (scene units are km)
@@ -220,7 +245,7 @@ export class Terrain {
     uContours: { value: 0 }, uFill: { value: 1 }, uGrid: { value: 0 }, uSpanKm: { value: 100 },
     uSunScene: { value: new THREE.Vector3(0, 1, 0) }, uEarthScene: { value: new THREE.Vector3(0, 1, 0) },
     uSel: { value: new THREE.Vector3(0, 0, 0) },
-    uLamp: { value: 0 }, uGrain: { value: 0 }, uSelR: { value: 1 }, uFull: { value: 0 }, uH: { value: null as THREE.Texture | null }, uCellM: { value: 100 }, uExag: { value: 1 }, uHole: { value: new THREE.Vector4(0, 0, 0, 0) }, uLightScene: { value: new THREE.Vector3(-0.38, 0.86, -0.34).normalize() }, uLampPos: { value: new THREE.Vector3() }, uLampDir: { value: new THREE.Vector3(0, 0, -1) },
+    uLamp: { value: 0 }, uGrain: { value: 0 }, uSelR: { value: 1 }, ...psrUniforms(), ...detailUniforms(), uColor: { value: null as THREE.Texture | null }, uHasColor: { value: 0 }, uFrE: { value: new THREE.Vector3(1, 0, 0) }, uFrN: { value: new THREE.Vector3(0, 1, 0) }, uFrU: { value: new THREE.Vector3(0, 0, 1) }, uFull: { value: 0 }, uH: { value: null as THREE.Texture | null }, uCellM: { value: 100 }, uExag: { value: 1 }, uHole: { value: new THREE.Vector4(0, 0, 0, 0) }, uLightScene: { value: new THREE.Vector3(-0.38, 0.86, -0.34).normalize() }, uLampPos: { value: new THREE.Vector3() }, uLampDir: { value: new THREE.Vector3(0, 0, -1) },
   }
 
   constructor(meshRes = 768) {
@@ -230,7 +255,7 @@ export class Terrain {
     this.stayRT = new THREE.WebGLRenderTarget(4, 4, rtOpts)
     const visUniforms = {
       uZ: { value: null as THREE.Texture | null }, uSpan: { value: 1 }, uN: { value: 1 }, uSunR: { value: 0.00465 },
-      uZB: { value: null as THREE.Texture | null }, uHasB: { value: 0 }, uSpanB: { value: 1 }, uC: { value: new THREE.Vector2() }, uCB: { value: new THREE.Vector2() },
+      uZB: { value: null as THREE.Texture | null }, uHasB: { value: 0 }, uSteps: { value: 180 }, uSpanB: { value: 1 }, uC: { value: new THREE.Vector2() }, uCB: { value: new THREE.Vector2() },
       uSun: { value: new THREE.Vector3(0, 0, 1) }, uEarth: { value: new THREE.Vector3(0, 0, 3.8e8) },
     }
     this.visMat = new THREE.ShaderMaterial({ uniforms: visUniforms, vertexShader: quadVert, fragmentShader: COMMON + visFrag, depthTest: false, depthWrite: false })
@@ -269,6 +294,7 @@ export class Terrain {
   private linkBase() {
     const u = this.visMat.uniforms, b = this.base?.patch
     u.uHasB.value = b && this.base!.zTex ? 1 : 0
+    u.uSteps.value = u.uHasB.value ? 280 : 180
     if (b) { u.uZB.value = this.base!.zTex; u.uSpanB.value = b.spanM; u.uCB.value.set(b.ce, b.cn) }
   }
   /** Hide this square where a finer one is drawn: centre (east, north) metres and width, or null. */
@@ -330,7 +356,7 @@ export class Terrain {
     geo.setIndex(new THREE.BufferAttribute(idx, 1))
     if (this.mesh) { this.mesh.geometry.dispose(); this.mesh.geometry = geo }
     else {
-      const mat = new THREE.ShaderMaterial({ uniforms: this.uniforms, vertexShader: LOG_DEPTH_VERT_PARS + COMMON + terrVert, fragmentShader: LOG_DEPTH_FRAG_PARS + COMMON + terrFrag })
+      const mat = new THREE.ShaderMaterial({ uniforms: this.uniforms, vertexShader: LOG_DEPTH_VERT_PARS + COMMON + terrVert, fragmentShader: LOG_DEPTH_FRAG_PARS + COMMON + PSR_GLSL + DETAIL_GLSL + terrFrag })
       this.mesh = new THREE.Mesh(geo, mat)
       this.mesh.frustumCulled = false
       this.group.add(this.mesh)

@@ -1,25 +1,29 @@
 import { useMemo, useState } from 'react'
-import { Plus, Star, X } from 'lucide-react'
+import { Plus, RadioTower, Star, X } from 'lucide-react'
+import { SideBySide, type SideRow } from '../components/SideBySide'
 import { DURATIONS } from '../components/TimeBar'
 import { runs, sunState } from '../components/Timeline'
 import { GROUPS, SITES, fmtLat, fmtLon, type Site } from '../data/sites'
-import { computeSeries, makeFrame, summarize, type Series, type Summary } from '../engine/sky'
-import { DAY, HOUR, fmtDate, fmtDayShort, fmtHours } from '../engine/time'
-import { horizonFor, useSize } from '../hooks'
-import { findSite, useStore, type Scenario } from '../store'
+import { computeSeries, makeFrame, summarize, type Horizon, type Series, type Summary } from '../engine/sky'
+import { fmtC } from '../engine/thermal'
+import { DAY, HOUR, fmtDate, fmtDayShort, fmtHours, fmtTimeOfDay, parseTimeOfDay, startOfUtcDay } from '../engine/time'
+import { horizonFor, useEarthMargin, useSize } from '../hooks'
+import { scoreStay, slopeAt, type SiteScore } from '../services/api'
+import { EARTH_MARGINS, findSite, useStore, type Scenario } from '../store'
 
-interface Row { sc: Scenario; site: Site; series: Series; m: Summary; letter: string }
+interface Row { sc: Scenario; site: Site; series: Series; m: Summary; letter: string; score: SiteScore; horizon: Horizon }
 const LETTERS = 'ABCDEF'
 const LINE = ['#e9e7f5', '#9b9dff', '#5ec8b0', '#f08ba0', '#d6c35c', '#7fb2ff']
 const DASH = ['', '6 3', '2 3', '8 3 2 3', '1 4', '10 4']
 
-const METRICS: { key: keyof Summary; label: string; hint: string; better: 'high' | 'low'; fmt: (v: number) => string }[] = [
+const METRICS: { key: Exclude<keyof Summary, 'backend'>; label: string; hint: string; better: 'high' | 'low' | 'none'; fmt: (v: number) => string }[] = [
   { key: 'sunPct', label: 'Sunlight available', hint: 'Mean share of the solar disc above the horizon — a proxy for power from a Sun-tracking array.', better: 'high', fmt: (v) => v.toFixed(0) + '%' },
   { key: 'longestDarkH', label: 'Longest darkness', hint: 'Longest continuous stretch with no part of the Sun visible. Sets battery and survival-heater sizing.', better: 'low', fmt: fmtHours },
   { key: 'peakSunEl', label: 'Peak Sun elevation', hint: 'Highest the Sun gets. Low values mean long shadows and vertical arrays.', better: 'high', fmt: (v) => v.toFixed(1) + '°' },
   { key: 'earthPct', label: 'Earth in view', hint: 'Share of the stay with geometric line of sight to Earth’s centre (direct-to-Earth link possible).', better: 'high', fmt: (v) => v.toFixed(0) + '%' },
   { key: 'longestOutageH', label: 'Longest comm gap', hint: 'Longest continuous stretch with Earth below the horizon.', better: 'low', fmt: fmtHours },
   { key: 'bothPct', label: 'Sun + Earth together', hint: 'Share of the stay with both power and a direct link — the easiest hours to operate in.', better: 'high', fmt: (v) => v.toFixed(0) + '%' },
+  { key: 'peakGroundK', label: 'Warmest ground (est.)', hint: 'Level ground at the moment of most sunlight, from a sunlight-in = heat-out balance. In shadow it falls below −170 °C.', better: 'none', fmt: (v) => (v > 0 ? fmtC(v) : 'never lit') },
 ]
 
 function Strip({ s }: { s: Series }) {
@@ -36,19 +40,20 @@ function Strip({ s }: { s: Series }) {
 /** What happens to each site if the landing date moves: window metrics as a function of landing date. */
 function SlipChart({ rows, stay, metric }: { rows: Row[]; stay: number; metric: 'sun' | 'earth' }) {
   const moon = useStore((s) => s.moon)
+  const margin = useEarthMargin()
   const [ref, { w }] = useSize<HTMLDivElement>()
   const h = 190, L = 40, R = 118, T = 10, B = 24, SPAN = 180
   const t0 = Math.min(...rows.map((r) => r.sc.landingMs))
   const sites = useMemo(() => [...new Map(rows.map((r) => [r.site.id, r.site])).values()], [rows])
   const curves = useMemo(() => sites.map((site) => {
     const per = 12, n = (SPAN + stay) * per + 1
-    const s = computeSeries(makeFrame(site.lat, site.lon), horizonFor(site, moon), t0, 2 * HOUR, n)
+    const s = computeSeries(makeFrame(site.lat, site.lon), horizonFor(site, moon), t0, 2 * HOUR, n, margin)
     const acc = new Float64Array(n + 1)
     for (let i = 0; i < n; i++) acc[i + 1] = acc[i] + (metric === 'sun' ? s.sunFrac[i] : s.earthUp[i])
     const v = new Float32Array(SPAN + 1)
     for (let d = 0; d <= SPAN; d++) v[d] = (100 * (acc[d * per + stay * per] - acc[d * per])) / (stay * per)
     return { site, v }
-  }), [sites, stay, metric, t0, moon])
+  }), [sites, stay, metric, t0, moon, margin])
   const X = (d: number) => L + (d / SPAN) * (w - L - R), Y = (p: number) => T + (1 - p / 100) * (h - T - B)
   // end-of-line labels, pushed apart so they never overlap
   const labelY = useMemo(() => {
@@ -90,20 +95,23 @@ function SlipChart({ rows, stay, metric }: { rows: Row[]; stay: number; metric: 
 }
 
 export function Compare() {
-  const { scenarios, custom, range, moon } = useStore()
-  const { addScenario, updateScenario, removeScenario } = useStore()
+  const { scenarios, custom, range, moon, earthMarginDeg } = useStore()
+  const { addScenario, updateScenario, removeScenario, setEarthMargin } = useStore()
   const [stay, setStay] = useState(14)
   const all = useMemo(() => [...SITES, ...custom], [custom])
 
   const rows: Row[] = useMemo(() => scenarios.map((sc, i) => {
     const site = findSite(sc.siteId, custom)
     const n = Math.min(960, Math.round(sc.days * 96))
-    const series = computeSeries(makeFrame(site.lat, site.lon), horizonFor(site, moon), sc.landingMs, (sc.days * DAY) / (n - 1), n)
-    return { sc, site, series, m: summarize(series), letter: LETTERS[i] }
-  }), [scenarios, custom, moon])
+    const horizon = horizonFor(site, moon)
+    const series = computeSeries(makeFrame(site.lat, site.lon), horizon, sc.landingMs, (sc.days * DAY) / (n - 1), n, earthMarginDeg)
+    const m = summarize(series)
+    return { sc, site, series, m, letter: LETTERS[i], score: scoreStay(m, slopeAt(site)), horizon }
+  }), [scenarios, custom, moon, earthMarginDeg])
+  const side: SideRow[] = useMemo(() => rows.map((r) => ({ key: r.sc.id, letter: r.letter, site: r.site, landingMs: r.sc.landingMs, days: r.sc.days, series: r.series, horizon: r.horizon })), [rows])
 
   const best = (k: (typeof METRICS)[number]) => {
-    if (rows.length < 2) return -1
+    if (rows.length < 2 || k.better === 'none') return -1
     const vals = rows.map((r) => r.m[k.key])
     const b = k.better === 'high' ? Math.max(...vals) : Math.min(...vals)
     return vals.filter((v) => Math.abs(v - b) < 1e-6).length === 1 ? vals.indexOf(b) : -1
@@ -119,6 +127,8 @@ export function Compare() {
         </div>
         <button className="btn primary" onClick={() => addScenario()} disabled={scenarios.length >= 6}><Plus size={15} aria-hidden="true" /> Add scenario</button>
       </header>
+
+      {rows.length > 0 && <SideBySide rows={side} />}
 
       {rows.length === 0 ? <p className="empty">No scenarios yet. Add one to start comparing.</p> : (
         <div className="tablewrap">
@@ -138,16 +148,35 @@ export function Compare() {
                     <p className="mono dim small">{fmtLat(r.site.lat, 2)} · {fmtLon(r.site.lon, 2)}</p>
                     <div className="row">
                       <input type="date" value={fmtDate(r.sc.landingMs)} min={fmtDate(range[0] + DAY)} max={fmtDate(range[1] - 121 * DAY)} aria-label={`Landing date for scenario ${r.letter}`}
-                        onChange={(e) => { const t = Date.parse(e.target.value + 'T00:00:00Z'); if (isFinite(t)) updateScenario(r.sc.id, { landingMs: t }) }} />
+                        onChange={(e) => { const t = Date.parse(e.target.value + 'T00:00:00Z'); if (isFinite(t)) updateScenario(r.sc.id, { landingMs: t + (r.sc.landingMs - startOfUtcDay(r.sc.landingMs)) }) }} />
                       <select value={r.sc.days} onChange={(e) => updateScenario(r.sc.id, { days: Number(e.target.value) })} aria-label={`Stay length for scenario ${r.letter}`}>
                         {DURATIONS.map(([d]) => <option key={d} value={d}>{d} d</option>)}
                       </select>
                     </div>
+                    <label className="row cmp-time"><span className="dim small">Time (UTC)</span>
+                      <input type="time" step={60} value={fmtTimeOfDay(r.sc.landingMs)} aria-label={`Landing time for scenario ${r.letter}, UTC`}
+                        onChange={(e) => { const t = parseTimeOfDay(e.target.value); if (t !== null) updateScenario(r.sc.id, { landingMs: startOfUtcDay(r.sc.landingMs) + t }) }} />
+                    </label>
                   </th>
                 ))}
               </tr>
             </thead>
             <tbody>
+              <tr className="score-row">
+                <th scope="row"><span>Overall score</span><small>The KURO backend’s 0–100 recommendation score for this stay (flat ground 25%, safety 25%, sunlight 20%, Earth link 15%, Sun + Earth together 15%) — the same score as the Explorer ranking. KURO adds one rule: no sunlight or no Earth at all scores 0.</small></th>
+                {rows.map((r) => {
+                  const vals = rows.map((x) => x.score.score ?? -1), b = Math.max(...vals)
+                  const isBest = rows.length > 1 && r.score.score !== null && vals.filter((v) => Math.abs(v - b) < 1e-6).length === 1 && Math.abs((r.score.score ?? -1) - b) < 1e-6
+                  return (
+                    <td key={r.sc.id} className={isBest ? 'best' : ''}>
+                      <span className="val mono">{r.series.complete && r.score.score !== null ? Math.round(r.score.score) : '—'}</span>
+                      {isBest && <span className="star"><Star size={12} aria-hidden="true" /> best</span>}
+                      {r.score.blockers.length > 0 && <small className="block-note blocker">{r.score.blockers.join(', ')}; the backend formula alone gives {r.score.backendScore === null ? '—' : Math.round(r.score.backendScore)}</small>}
+                      {r.score.componentScores.terrain === null && r.score.score !== null && <small className="dim block-note">No slope here{r.site.lat > -80 ? ' (slope only for sites south of 80°S)' : ''}, so the score uses {Math.round(r.score.completenessPct)}% of the backend’s inputs</small>}
+                    </td>
+                  )
+                })}
+              </tr>
               {METRICS.map((k) => {
                 const b = best(k)
                 return (
@@ -189,6 +218,14 @@ export function Compare() {
           </div>
         </section>
       )}
+      <label className="margin-row wide">
+        <RadioTower size={14} aria-hidden="true" />
+        <span>“Earth in view” counts only when Earth is at least</span>
+        <select value={earthMarginDeg} onChange={(e) => setEarthMargin(Number(e.target.value))} aria-label="Antenna margin: how far Earth must be above the horizon">
+          {EARTH_MARGINS.map((m) => <option key={m} value={m}>{m}°</option>)}
+        </select>
+        <span>above the hills (antenna margin). The same setting is used everywhere in KURO.</span>
+      </label>
       <p className="notice wide"><span>{moon?.ok ? <><b>Terrain horizon.</b> Each site’s skyline is traced from NASA LOLA elevation out to 300 km, and Sun and Earth positions come from JPL DE421.</> : <><b>Smooth-sphere horizon.</b> Exact Sun and Earth geometry (JPL DE421) against an ideal horizon. Install LOLA elevation with <code>npm run fetch:moon</code> to add terrain.</>}</span></p>
     </main>
   )

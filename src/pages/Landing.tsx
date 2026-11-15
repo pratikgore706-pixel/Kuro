@@ -39,7 +39,9 @@ export function Landing() {
         <Brand size={24} />
         <nav aria-label="Primary">
           <Link to="/explorer">Explorer</Link>
+          <Link to="/mission">Mission</Link>
           <Link to="/compare">Compare</Link>
+          <Link to="/reports">Reports</Link>
           <Link to="/methods">Data &amp; methods</Link>
         </nav>
         <Link className="btn" to="/explorer">Launch explorer <ArrowRight size={14} aria-hidden="true" /></Link>
