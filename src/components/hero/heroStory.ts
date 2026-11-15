@@ -196,9 +196,10 @@ export function mountHeroStory(track: HTMLElement): () => void {
 
   // ---- chapter stepping: one scroll gesture = one chapter, at a calm pace ----
   // A fast flick or a long trackpad swipe used to race through several chapters. While the story is pinned,
-  // each wheel gesture, arrow / Page / Space key or swipe glides to the next (or previous) reading point and
-  // then holds for a moment; extra scrolling during the glide is ignored. Past the last chapter the page
-  // scrolls normally again.
+  // each wheel gesture, arrow / Page / Space key or swipe glides to the next (or previous) reading point.
+  // A gesture (a mouse-wheel notch or a whole trackpad swipe with its momentum) moves exactly one chapter;
+  // a new gesture made during a glide is queued and runs as soon as the glide ends. Past the last chapter
+  // the page scrolls normally again.
   const stops = (() => {
     // story progress where each chapter's text is fully in and comfortable to read
     const ps = [0, ...PHASES.map((ph) => ph.t1 + 0.35 * (ph.o0 - ph.t1)), 1]
@@ -213,39 +214,58 @@ export function mountHeroStory(track: HTMLElement): () => void {
       return 1
     })
   })()
-  const GLIDE_MS = 1500, HOLD_MS = 450
-  let busyUntil = 0, glide = 0, touchY: number | null = null
+  const GLIDE_MS = 650
+  /** Wheel events closer together than this belong to the same gesture (trackpad momentum, a fast spin). */
+  const GESTURE_GAP_MS = 180
+  let busyUntil = 0, glide = 0, touchY: number | null = null, queued = 0
+  let lastWheel = 0, gestureUsed = false
   const span = () => {
     const top = track.getBoundingClientRect().top + window.scrollY
     return { top, len: Math.max(0, track.offsetHeight - hv.offsetHeight) }
   }
   const pinned = () => { const { len } = span(); return len > hv.offsetHeight * 1.5 }
-  /** Step one chapter in direction d (+1 down, −1 up). Returns false if the page should scroll normally. */
-  const step = (d: number): boolean => {
-    if (!pinned()) return false
+  /** Is the story on screen and is there a reading point to go to in direction d? */
+  const nextStop = (d: number): number | undefined => {
+    if (!pinned()) return undefined
     const { top, len } = span(), y = window.scrollY
-    if (y < top - 2 || y > top + len + 2) return false          // the story is not on screen
-    const now = performance.now()
-    if (now < busyUntil) return true                              // still gliding: swallow the input
+    if (y < top - 2 || y > top + len + 2) return undefined       // the story is not on screen
     const ys = stops.map((sv) => top + sv * len)
-    const to = d > 0 ? ys.find((v) => v > y + 4) : [...ys].reverse().find((v) => v < y - 4)
+    return d > 0 ? ys.find((v) => v > y + 4) : [...ys].reverse().find((v) => v < y - 4)
+  }
+  /** Step one chapter in direction d (+1 down, -1 up). Returns false if the page should scroll normally. */
+  const step = (d: number): boolean => {
+    const now = performance.now()
+    if (now < busyUntil) { queued = d; return true }             // gliding: run this step right after
+    const to = nextStop(d)
     if (to === undefined) return false                            // past the ends: normal scrolling
-    const from = y, t0 = now
-    const dur = matchMedia('(prefers-reduced-motion: reduce)').matches ? 300 : GLIDE_MS
-    busyUntil = now + dur + HOLD_MS
+    const from = window.scrollY, t0 = now
+    const dur = matchMedia('(prefers-reduced-motion: reduce)').matches ? 250 : GLIDE_MS
+    busyUntil = now + dur
     cancelAnimationFrame(glide)
     const run = () => {
       const k = Math.min(1, (performance.now() - t0) / dur)
-      const e = k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2
+      const e = 1 - Math.pow(1 - k, 3)                            // ease-out: moves at once, settles softly
       window.scrollTo(0, from + (to - from) * e)
-      if (k < 1) glide = requestAnimationFrame(run)
+      if (k < 1) { glide = requestAnimationFrame(run); return }
+      busyUntil = 0
+      if (queued) { const q = queued; queued = 0; step(q) }
     }
     glide = requestAnimationFrame(run)
     return true
   }
   const onWheel = (e: WheelEvent) => {
-    if (e.ctrlKey || Math.abs(e.deltaY) < 4 || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return
-    if (step(Math.sign(e.deltaY))) e.preventDefault()
+    if (e.ctrlKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return
+    const now = performance.now(), fresh = now - lastWheel > GESTURE_GAP_MS
+    lastWheel = now
+    if (fresh) gestureUsed = false
+    const d = Math.sign(e.deltaY)
+    if (!d) return
+    const inStory = performance.now() < busyUntil || nextStop(d) !== undefined
+    if (!inStory) return                                          // outside the story: normal scrolling
+    e.preventDefault()
+    if (gestureUsed) return                                       // rest of the same swipe: already stepped
+    gestureUsed = true
+    step(d)
   }
   const onKey = (e: KeyboardEvent) => {
     const t = e.target as HTMLElement | null
@@ -254,17 +274,11 @@ export function mountHeroStory(track: HTMLElement): () => void {
     if (d && step(d)) e.preventDefault()
   }
   const onTouchStart = (e: TouchEvent) => { touchY = e.touches[0]?.clientY ?? null }
-  /** Is there a reading point to step to in direction d from here (inside the story)? */
-  const hasStop = (d: number) => {
-    const { top, len } = span(), y = window.scrollY
-    if (y < top - 2 || y > top + len + 2) return false
-    return stops.some((sv) => (d > 0 ? top + sv * len > y + 4 : top + sv * len < y - 4))
-  }
   const onTouchMove = (e: TouchEvent) => {
     if (touchY === null || !pinned()) return
     const dy = touchY - (e.touches[0]?.clientY ?? touchY)
     // inside the story the stepper moves the page, not the finger (until the last chapter)
-    if (performance.now() < busyUntil || (Math.abs(dy) > 2 && hasStop(Math.sign(dy)))) e.preventDefault()
+    if (performance.now() < busyUntil || (Math.abs(dy) > 2 && nextStop(Math.sign(dy)) !== undefined)) e.preventDefault()
   }
   const onTouchEnd = (e: TouchEvent) => {
     if (touchY === null) return
