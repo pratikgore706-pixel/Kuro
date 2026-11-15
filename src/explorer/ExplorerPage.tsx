@@ -67,6 +67,7 @@ export function ExplorerPage() {
   // views that no longer exist (the old standing view) fall back to the globe
   const mode: ViewMode = MODES.includes(storedMode) ? storedMode : 'globe'
   const [mapKind, setMapKind] = useLocal<MapKind>('kuro.mapKind', 'global')
+  const [roverOpen, setRoverOpen] = useLocal<boolean>('kuro.roverPanel', true)
   const [layers, setLayers] = useLocal<Record<'space' | 'terrain' | 'ground', LayerId>>('kuro.layers4', { space: 'imagery', terrain: 'imagery', ground: 'imagery' })
   const [lighting, setLighting] = useLocal<Lighting>('kuro.light', 'sun')
   const [exag, setExag] = useLocal('kuro.exag2', { globe: 4, terrain: 1.5 })
@@ -254,7 +255,7 @@ export function ExplorerPage() {
   ] as const).filter((t) => t[2])
 
   return (
-    <main ref={root} className={`xp mode-${mode}${panels.info ? '' : ' info-closed'}${panels.sky ? ' sky-open' : ''}`}>
+    <main ref={root} className={`xp mode-${mode}${panels.info ? '' : ' info-closed'}${panels.sky ? ' sky-open' : ''}${roverOpen ? '' : ' rover-closed'}`}>
       <div ref={host} className="xp-stage" />
       {!webgl && <div className="xp-block"><Astronaut size={140} /><h2>3D needs WebGL</h2><p>This device could not start WebGL. The sky chart, site conditions and comparison still work.</p></div>}
       {status?.blocked && (
@@ -412,7 +413,7 @@ export function ExplorerPage() {
 
       {caption && <div className="xp-cap" key={phase} aria-live="polite"><span>{caption.k}</span><b>{caption.t}</b></div>}
       {intro && <LandingIntro onDone={closeIntro} onLand={landAt} onGuide={() => { setIntro(false); setGuide(true) }} />}
-      {guide && <ExplorerGuide onClose={() => setGuide(false)} onScenic={() => { setGuide(false); setTour(0) }} />}
+      {guide && <ExplorerGuide mode={mode} onView={setMode} onClose={() => setGuide(false)} onScenic={() => { setGuide(false); setTour(0) }} />}
 
       <HoverHud hover={hoverSig} source={status?.resolution ?? ''} />
       <ScaleBar engine={e} />
@@ -424,7 +425,7 @@ export function ExplorerPage() {
       )}
 
       <Controls engine={e} mode={mode} />
-      {mode === 'rover' && <RoverHud engine={e} telemetry={roverSig} />}
+      {mode === 'rover' && <RoverHud engine={e} telemetry={roverSig} open={roverOpen} onOpen={setRoverOpen} />}
       <MeasurePanel engine={e} m={measure} on={measuring} />
       {tour !== null && <Tour steps={tourSteps} i={tour} onStep={setTour} onClose={() => setTour(null)} />}
       {toast && <div className="xp-toast" role="status">{toast}</div>}

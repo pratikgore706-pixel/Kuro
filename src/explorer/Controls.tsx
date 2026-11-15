@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { ArrowDown, ArrowUp, Camera, Crosshair, Flag, Gamepad2, Lightbulb, Navigation, Pause, Play, RotateCcw, RotateCw, Search, Square, Undo2 } from 'lucide-react'
+import { ArrowDown, ArrowUp, Camera, ChevronLeft, ChevronRight, Crosshair, Flag, Gamepad2, Lightbulb, Navigation, Pause, Play, RotateCcw, RotateCw, Search, Square, Undo2 } from 'lucide-react'
 import type { ExplorerEngine, ViewMode } from './engine/ExplorerEngine'
 import { ROVER_SPEEDS, type RoverSpeed, type RoverTelemetry } from './engine/Rover'
 import { SITES, fmtLat, fmtLon } from '../data/sites'
@@ -128,16 +128,26 @@ function GoTo({ engine, t }: { engine: ExplorerEngine; t: RoverTelemetry }) {
   )
 }
 
-export function RoverHud({ engine, telemetry }: { engine: ExplorerEngine | null; telemetry: Signal<RoverTelemetry | null> }) {
+export function RoverHud({ engine, telemetry, open = true, onOpen }: { engine: ExplorerEngine | null; telemetry: Signal<RoverTelemetry | null>; open?: boolean; onOpen?: (open: boolean) => void }) {
   const t = useSignal(telemetry)
   const [tab, setTab] = useState<'free' | 'goto'>('free')
   if (!engine || !t) return null
   const kmh = t.speedMps * 3.6
+  // tucked away: a slim tab on the right edge that still shows Sun and Earth at a glance
+  if (!open) return (
+    <button className="rh-edge" data-occlude onClick={() => onOpen?.(true)} aria-label="Show the rover dashboard" title="Show the rover dashboard">
+      <ChevronLeft size={15} aria-hidden="true" />
+      <i className={'dot sun' + (t.sunFrac > 0 ? ' on' : '')} title={t.sunFrac > 0 ? 'Sun up' : 'In shadow'} />
+      <i className={'dot earth' + (t.earthUp ? ' on' : '')} title={t.earthUp ? 'Earth in view' : 'Earth blocked'} />
+      <span className="lbl">Rover</span>
+    </button>
+  )
   return (
     <section className="rover-hud glass" data-occlude aria-label="Rover telemetry">
       <header>
         <b>Rover</b>
         <span className="mono dim">{fmtLat(t.lat, 3)} {fmtLon(t.lon, 3)}</span>
+        {onOpen && <button className="rh-hide" onClick={() => onOpen(false)} aria-label="Hide the rover dashboard" title="Hide this panel to see more of the ground"><ChevronRight size={15} /></button>}
       </header>
       <div className="rh-grid">
         <div><span>Speed</span><b className="mono">{t.speedMps < 1 ? `${t.speedMps.toFixed(2)} m/s` : `${kmh.toFixed(1)} km/h`}</b>{t.timeScale > 1 && <small>time-lapse ×{t.timeScale}</small>}</div>

@@ -1,0 +1,41 @@
+/* Explorer guide (KURO, plain words). Builds on the spotlight styles in compare.css (.ct, .ct-spot, .ct-pop). */
+.xg { --brass: #b5a18a; }
+.xg.centred .ct-shade { background: rgba(2, 3, 5, 0.66); }
+.xg-pop { width: min(370px, calc(100vw - 24px)); }
+.xg-pop.big { width: min(540px, calc(100vw - 24px)); padding: 22px 24px 18px; }
+.xg-kicker { margin: 0; font: 500 9.5px/1.2 var(--mono, 'IBM Plex Mono', monospace); letter-spacing: 0.14em; text-transform: uppercase; color: var(--brass); }
+.xg-pop h3 { text-wrap: balance; }
+.xg-hero { display: grid; grid-template-columns: 150px 1fr; gap: 18px; align-items: center; padding-right: 20px; }
+.xg-hero h3 { margin: 6px 0 0; font: 500 23px/1.15 var(--head, 'Space Grotesk Variable', sans-serif); letter-spacing: -0.01em; }
+.xg-rover .grover { animation: none; }
+.xg-pop.big .ct-text { font-size: 14.5px; margin-top: 14px; }
+.xg-tips { margin: -4px 0 12px; padding: 0; list-style: none; display: grid; gap: 5px; }
+.xg-tips li { position: relative; padding-left: 14px; font-size: 12.5px; line-height: 1.5; color: var(--text-3, #858b91); }
+.xg-tips li::before { content: ''; position: absolute; left: 0; top: 0.68em; width: 6px; height: 1px; background: var(--brass); }
+.xg-try { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin: -2px 0 14px; }
+.xg-try span { font-size: 12px; color: var(--text-3, #858b91); margin-right: 2px; }
+.xg-try button { height: 26px; padding: 0 10px; border: 1px solid rgba(216, 213, 204, 0.2); border-radius: 2px; background: none; color: var(--text, #f2efe6); font: 500 10px/1 var(--mono, monospace); letter-spacing: 0.08em; text-transform: uppercase; cursor: pointer; }
+.xg-try button:hover { border-color: var(--brass); }
+.xg-try button.on { background: var(--ivory, #ece8dd); color: var(--ivory-ink, #07090b); border-color: var(--ivory, #ece8dd); }
+.xg-dots { flex: 1; display: flex; flex-wrap: wrap; gap: 3px; margin-right: 6px; }
+.xg-dots button { width: 12px; height: 3px; padding: 0; border: 0; border-radius: 1px; background: rgba(216, 213, 204, 0.18); cursor: pointer; }
+.xg-dots button.done { background: rgba(181, 161, 138, 0.5); }
+.xg-dots button.on { width: 20px; background: var(--brass); }
+@media (max-width: 700px) {
+  .xg-hero { grid-template-columns: 96px 1fr; gap: 12px; }
+  .xg-hero h3 { font-size: 19px; }
+  .xg-pop, .xg-pop.big { width: calc(100vw - 24px); }
+}
+
+/* Rover dashboard: hide / show */
+.rover-hud .rh-hide { display: grid; place-items: center; width: 28px; height: 28px; margin-left: auto; border: 1px solid var(--hair-2, rgba(216,213,204,0.18)); border-radius: 2px; background: none; color: var(--text-2, #b3afa5); cursor: pointer; }
+.rover-hud .rh-hide:hover { color: var(--text, #f2efe6); border-color: var(--hair-3, rgba(216,213,204,0.32)); }
+.rover-hud header { align-items: center; }
+.rh-edge { position: absolute; right: var(--gap, 16px); top: var(--top, 16px); z-index: 6; display: flex; flex-direction: column; align-items: center; gap: 10px; width: 46px; padding: 12px 0; border: 1px solid var(--hair-2, rgba(216,213,204,0.18)); border-radius: 3px; background: rgba(8, 10, 13, 0.88); color: var(--text, #f2efe6); cursor: pointer; }
+.rh-edge:hover { border-color: var(--brass, #b5a18a); }
+.rh-edge .lbl { writing-mode: vertical-rl; transform: rotate(180deg); font: 500 10px/1 var(--mono, monospace); letter-spacing: 0.14em; text-transform: uppercase; }
+.rh-edge .dot { width: 8px; height: 8px; border-radius: 50%; background: rgba(216, 213, 204, 0.18); }
+.rh-edge .dot.sun.on { background: #e7bf72; box-shadow: 0 0 6px rgba(231, 191, 114, 0.8); }
+.rh-edge .dot.earth.on { background: #8fb8e6; box-shadow: 0 0 6px rgba(143, 184, 230, 0.8); }
+.mode-rover.rover-closed .xp-toolbar { right: calc(var(--gap) * 2 + 46px); }
+@media (max-width: 860px) { .rh-edge { position: relative; inset: auto; order: 2; flex-direction: row; width: auto; padding: 8px 12px; } .rh-edge .lbl { writing-mode: horizontal-tb; transform: none; } .mode-rover.rover-closed .xp-toolbar { right: var(--gap); } }

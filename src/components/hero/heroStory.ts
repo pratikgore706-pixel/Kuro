@@ -12,7 +12,7 @@ import {
   storyProgress, sunAt, telemetryAt, SUNSET_AT,
 } from './chapterController'
 import { ROVER_PTS, createRoverAnimation } from './roverAnimation'
-import { CHAPTERS, CTA } from './storyScript'
+import { CHAPTERS, CTA, SEGMENTS } from './storyScript'
 import { bindTelemetry } from './telemetryView'
 
 const HORIZON = 0.61          // horizon height as a fraction of the ground band
@@ -194,7 +194,97 @@ export function mountHeroStory(track: HTMLElement): () => void {
   const onLoad = () => onResize()
   window.addEventListener('load', onLoad)
 
+  // ---- chapter stepping: one scroll gesture = one chapter, at a calm pace ----
+  // A fast flick or a long trackpad swipe used to race through several chapters. While the story is pinned,
+  // each wheel gesture, arrow / Page / Space key or swipe glides to the next (or previous) reading point and
+  // then holds for a moment; extra scrolling during the glide is ignored. Past the last chapter the page
+  // scrolls normally again.
+  const stops = (() => {
+    // story progress where each chapter's text is fully in and comfortable to read
+    const ps = [0, ...PHASES.map((ph) => ph.t1 + 0.35 * (ph.o0 - ph.t1)), 1]
+    const total = SEGMENTS.reduce((a, g) => a + g.weight, 0)
+    // invert storyProgress: story progress → scroll progress
+    return ps.map((pv) => {
+      let acc = 0
+      for (const g of SEGMENTS) {
+        if (pv <= g.to) return clamp((acc + g.weight * clamp((pv - g.from) / (g.to - g.from))) / total)
+        acc += g.weight
+      }
+      return 1
+    })
+  })()
+  const GLIDE_MS = 1500, HOLD_MS = 450
+  let busyUntil = 0, glide = 0, touchY: number | null = null
+  const span = () => {
+    const top = track.getBoundingClientRect().top + window.scrollY
+    return { top, len: Math.max(0, track.offsetHeight - hv.offsetHeight) }
+  }
+  const pinned = () => { const { len } = span(); return len > hv.offsetHeight * 1.5 }
+  /** Step one chapter in direction d (+1 down, −1 up). Returns false if the page should scroll normally. */
+  const step = (d: number): boolean => {
+    if (!pinned()) return false
+    const { top, len } = span(), y = window.scrollY
+    if (y < top - 2 || y > top + len + 2) return false          // the story is not on screen
+    const now = performance.now()
+    if (now < busyUntil) return true                              // still gliding: swallow the input
+    const ys = stops.map((sv) => top + sv * len)
+    const to = d > 0 ? ys.find((v) => v > y + 4) : [...ys].reverse().find((v) => v < y - 4)
+    if (to === undefined) return false                            // past the ends: normal scrolling
+    const from = y, t0 = now
+    const dur = matchMedia('(prefers-reduced-motion: reduce)').matches ? 300 : GLIDE_MS
+    busyUntil = now + dur + HOLD_MS
+    cancelAnimationFrame(glide)
+    const run = () => {
+      const k = Math.min(1, (performance.now() - t0) / dur)
+      const e = k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2
+      window.scrollTo(0, from + (to - from) * e)
+      if (k < 1) glide = requestAnimationFrame(run)
+    }
+    glide = requestAnimationFrame(run)
+    return true
+  }
+  const onWheel = (e: WheelEvent) => {
+    if (e.ctrlKey || Math.abs(e.deltaY) < 4 || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return
+    if (step(Math.sign(e.deltaY))) e.preventDefault()
+  }
+  const onKey = (e: KeyboardEvent) => {
+    const t = e.target as HTMLElement | null
+    if (e.altKey || e.ctrlKey || e.metaKey || (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(t.tagName) && e.key === ' '))) return
+    const d = e.key === 'ArrowDown' || e.key === 'PageDown' || (e.key === ' ' && !e.shiftKey) ? 1 : e.key === 'ArrowUp' || e.key === 'PageUp' || (e.key === ' ' && e.shiftKey) ? -1 : 0
+    if (d && step(d)) e.preventDefault()
+  }
+  const onTouchStart = (e: TouchEvent) => { touchY = e.touches[0]?.clientY ?? null }
+  /** Is there a reading point to step to in direction d from here (inside the story)? */
+  const hasStop = (d: number) => {
+    const { top, len } = span(), y = window.scrollY
+    if (y < top - 2 || y > top + len + 2) return false
+    return stops.some((sv) => (d > 0 ? top + sv * len > y + 4 : top + sv * len < y - 4))
+  }
+  const onTouchMove = (e: TouchEvent) => {
+    if (touchY === null || !pinned()) return
+    const dy = touchY - (e.touches[0]?.clientY ?? touchY)
+    // inside the story the stepper moves the page, not the finger (until the last chapter)
+    if (performance.now() < busyUntil || (Math.abs(dy) > 2 && hasStop(Math.sign(dy)))) e.preventDefault()
+  }
+  const onTouchEnd = (e: TouchEvent) => {
+    if (touchY === null) return
+    const dy = touchY - (e.changedTouches[0]?.clientY ?? touchY)
+    touchY = null
+    if (Math.abs(dy) > 40) step(Math.sign(dy))
+  }
+  window.addEventListener('wheel', onWheel, { passive: false })
+  window.addEventListener('keydown', onKey)
+  window.addEventListener('touchstart', onTouchStart, { passive: true })
+  window.addEventListener('touchmove', onTouchMove, { passive: false })
+  window.addEventListener('touchend', onTouchEnd, { passive: true })
+
   return () => {
+    window.removeEventListener('wheel', onWheel)
+    window.removeEventListener('keydown', onKey)
+    window.removeEventListener('touchstart', onTouchStart)
+    window.removeEventListener('touchmove', onTouchMove)
+    window.removeEventListener('touchend', onTouchEnd)
+    cancelAnimationFrame(glide)
     window.removeEventListener('scroll', kick)
     window.removeEventListener('resize', onResize)
     window.removeEventListener('load', onLoad)
