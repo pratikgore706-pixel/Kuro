@@ -1,89 +1,126 @@
-import { Astronaut } from '../components/Art'
-import { useEffect, useState } from 'react'
+import { ScrollCue } from '../components/hero/HeroArt'
+import { mountHeroStory } from '../components/hero/heroStory'
+import { RoverDialogue } from '../components/hero/RoverDialogue'
+import { RoverTelemetry } from '../components/hero/RoverTelemetry'
+import { CHAPTERS, CTA } from '../components/hero/storyScript'
+import { useEffect, useRef } from 'react'
 import { ArrowRight } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { Brand } from '../components/Brand'
-import { SkyChart } from '../components/SkyChart'
 import { SITES } from '../data/sites'
-import { SPHERE_HORIZON } from '../engine/sky'
-import { fmtDuration, startOfUtcDay } from '../engine/time'
-import { useEvents, useSeries, useSkyAt } from '../hooks'
 
 const SITE = SITES[0] // IM-2 Athena, Mons Mouton
+const MISSION_DATE = SITE.eventMs
+  ? new Date(SITE.eventMs).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' }).toUpperCase()
+  : ''
 
-function LiveSky() {
-  const [now, setNow] = useState(Date.now())
-  useEffect(() => { const t = setInterval(() => setNow(Date.now()), 30000); return () => clearInterval(t) }, [])
-  const { series } = useSeries(SITE, startOfUtcDay(now), 30, 600)
-  const sky = useSkyAt(SITE, now)
-  const ev = useEvents(SITE, now)
-  return (
-    <figure className="livesky">
-      <figcaption>
-        <span className="live"><i /> Live</span>
-        <span>The sky over Mons Mouton right now, and for the next 30 days</span>
-      </figcaption>
-      <SkyChart series={series} horizon={SPHERE_HORIZON} sky={sky} />
-      <dl>
-        <div><dt>Sun</dt><dd className="mono">{sky.sunEl.toFixed(2)}°</dd><dd className="dim">{ev.sun ? `${ev.sun.type === 'set' ? 'sets' : 'rises'} in ${fmtDuration(ev.sun.ms - now)}` : 'no change in 60 d'}</dd></div>
-        <div><dt>Earth</dt><dd className="mono">{sky.earthEl.toFixed(2)}°</dd><dd className="dim">{ev.earth ? `${ev.earth.type === 'set' ? 'sets' : 'rises'} in ${fmtDuration(ev.earth.ms - now)}` : 'no change in 60 d'}</dd></div>
-      </dl>
-    </figure>
-  )
-}
+// Resolved against BASE_URL (not a literal leading-slash path) so the build keeps working
+// when served from a sub-path, same convention as the rest of the app (see engine/ephemeris.ts).
+const HERO = `${import.meta.env.BASE_URL}hero/`
+const STORY = `${HERO}story/`
+
+const STARS_BG = {
+  backgroundImage: `radial-gradient(1px 1px at 8% 16%, rgba(220,230,242,.75) 50%, transparent 100%), radial-gradient(1px 1px at 19% 61%, rgba(180,198,218,.65) 50%, transparent 100%), radial-gradient(1px 1px at 32% 28%, rgba(230,236,244,.6) 50%, transparent 100%), radial-gradient(1px 1px at 44% 76%, rgba(190,208,228,.7) 50%, transparent 100%), radial-gradient(1px 1px at 58% 12%, rgba(220,230,242,.65) 50%, transparent 100%), radial-gradient(1px 1px at 69% 54%, rgba(180,198,218,.6) 50%, transparent 100%), radial-gradient(1px 1px at 82% 23%, rgba(230,236,244,.7) 50%, transparent 100%), radial-gradient(1px 1px at 94% 71%, rgba(190,208,228,.65) 50%, transparent 100%), radial-gradient(1px 1px at 27% 88%, rgba(220,230,242,.55) 50%, transparent 100%), radial-gradient(1px 1px at 75% 87%, rgba(220,230,242,.55) 50%, transparent 100%)`,
+  backgroundColor: '#020406',
+  backgroundSize: '100% 100%',
+  backgroundPosition: 'center',
+  backgroundRepeat: 'no-repeat',
+} as const
 
 export function Landing() {
+  const trackRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const el = trackRef.current
+    if (!el || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+    return mountHeroStory(el)
+  }, [])
+
   return (
     <div className="landing">
-      <header className="lnav">
-        <Brand size={24} />
-        <nav aria-label="Primary">
-          <Link to="/explorer">Explorer</Link>
-          <Link to="/mission">Mission</Link>
-          <Link to="/compare">Compare</Link>
-          <Link to="/reports">Reports</Link>
-          <Link to="/methods">Data &amp; methods</Link>
-        </nav>
-        <Link className="btn" to="/explorer">Launch explorer <ArrowRight size={14} aria-hidden="true" /></Link>
-      </header>
+      <div className="hv-track" ref={trackRef}>
+      <section className="hv" aria-label="Thirteen hours — a real mission story">
+        <div className="hv-stars" style={STARS_BG} />
 
-      <section className="hero">
-        <div className="copy">
-          <p className="eyebrow">Lunar landing site × date explorer</p>
-          <h1>Explore the Moon.<br />Understand every landing.</h1>
-          <p className="lede">Pick a site and a date. KURO shows where the Sun and Earth sit against the horizon, how long the light and the radio link last, and what changes if the schedule slips.</p>
-          <div className="cta">
-            <Link className="btn primary lg" to="/explorer">Start exploring <ArrowRight size={16} aria-hidden="true" /></Link>
-            <Link className="btn lg" to="/explorer?tour">Take the 2-minute tour</Link>
+        <header className="hv-nav">
+          <Link to="/" className="hv-brand" aria-label="KURO home">
+            <Brand size={20} />
+            <span className="hv-brand-sub">Lunar South Pole Navigator</span>
+          </Link>
+          <nav aria-label="Primary">
+            <Link to="/mission">Mission</Link>
+            <Link to="/explorer">Explorer</Link>
+            <a href="#technology">Technology</a>
+            <Link to="/methods">Data</Link>
+            <a href="#about">About</a>
+          </nav>
+        </header>
+
+        <div className="hv-sun" aria-hidden="true"><span className="hv-sun-warm" /><span className="hv-sun-core" /></div>
+
+        <div className="hv-earthwrap" aria-hidden="true"><img src={`${import.meta.env.BASE_URL}hero/earth.png`} alt="" /></div>
+
+        <div className="hv-head">
+          <h1>thirteen<br />hours</h1>
+          <p className="hv-eyebrow"><span className="hv-rule" />A real mission story</p>
+        </div>
+
+        <div className="hv-copy">
+          <p>The mission was built for<br />ten days. The Moon gave<br />it thirteen hours.</p>
+          <Link to="/mission" className="hv-explore">Explore the story <ArrowRight size={14} aria-hidden="true" /></Link>
+        </div>
+
+        {/* scroll story: editorial chapters over the scene, faded in/out by heroStory.ts */}
+        <div className="hv-story">
+          {CHAPTERS.map((c) => (
+            <article key={c.n} className={`hv-ch hv-ch--${c.side}`}>
+              <p className="hv-ch-label"><span>{c.n}</span>{c.name}</p>
+              <h2 className="hv-ch-title">{c.title}</h2>
+              {c.paras.map((t, i) => <p key={i} className="hv-ch-p">{t}</p>)}
+              {c.facts && (
+                <dl className="hv-ch-facts">
+                  {c.facts.map((f) => <div key={f.k}><dt>{f.k}</dt><dd>{f.v}</dd></div>)}
+                </dl>
+              )}
+              {c.note && <p className="hv-ch-note">{c.note}</p>}
+              {c.n === '07' && (
+                <div className="hv-cta">
+                  <p>{CTA.text}</p>
+                  <Link to={CTA.to} className="hv-cta-btn">{CTA.label} <ArrowRight size={16} aria-hidden="true" /></Link>
+                </div>
+              )}
+            </article>
+          ))}
+        </div>
+
+        <RoverTelemetry initial={CHAPTERS[0].telemetry} />
+        <RoverDialogue chapters={CHAPTERS} avatar={`${STORY}rover-base.webp`} />
+
+        <div className="hv-ground" aria-hidden="true">
+          <div className="hv-land">
+            <div className="hv-plain"><img className="hv-plain-img" src={`${STORY}plain.webp`} alt="" /></div>
+            <img className="hv-mtn" src={`${STORY}mountains.webp`} alt="" />
+          </div>
+          <div className="hv-rover">
+            <span className="hv-rover-shadow" />
+            <img className="hv-rv" src={`${STORY}rover-base.webp`} alt="" />
+            <img className="hv-rv hv-rv-blur" src={`${STORY}rover-blur.webp`} alt="" />
+            <img className="hv-rv hv-face-green" src={`${STORY}face-green.webp`} alt="" />
+            <img className="hv-rv hv-face-yellow" src={`${STORY}face-yellow.webp`} alt="" />
+            <img className="hv-rv hv-face-red" src={`${STORY}face-red.webp`} alt="" />
           </div>
         </div>
-        <LiveSky />
-        <div className="limb" aria-hidden="true" />
-        <Astronaut size={150} className="hero-astro" />
-      </section>
 
-      <section className="facts" aria-label="Why the south pole is hard">
-        <p className="eyebrow">Why the south pole is different</p>
-        <div className="grid3">
-          <article><h3>1.5°</h3><p>The highest the Sun ever climbs at the lunar pole. It circles the horizon instead of crossing the sky, so a single ridge can mean a month of shadow.</p></article>
-          <article><h3>±6.7°</h3><p>How far Earth bobs above and below the polar horizon each month. A direct radio link there comes and goes on a two-week rhythm.</p></article>
-          <article><h3>250 m</h3><p>How far IM-2 Athena came down from its target on Mons Mouton in March 2025 — into a small crater, on its side, arrays out of the Sun. Metres and days both matter.</p></article>
+        <div className="hv-mission mono">
+          <span>{SITE.name.toUpperCase()}</span>
+          <span>Mons Mouton, Lunar South Pole</span>
+          <span>{MISSION_DATE}</span>
         </div>
-      </section>
 
-      <section className="what">
-        <div>
-          <p className="eyebrow">What KURO does</p>
-          <h2>The numbers mission planners ask for first, without the specialist tools.</h2>
-        </div>
-        <ol>
-          <li><h3>See the sky from the surface</h3><p>A panorama of the local horizon with the Sun and Earth tracked across the whole stay, and a countdown to the next sunset and Earthset.</p></li>
-          <li><h3>Compare scenarios side by side</h3><p>Up to six site–date combinations in one table: sunlight, longest darkness, Earth visibility, longest comm gap.</p></li>
-          <li><h3>Test a schedule slip</h3><p>One chart shows how every site performs for each landing date across the next six months.</p></li>
-        </ol>
+        <ScrollCue className="hv-scroll-pos" />
       </section>
+      </div>
 
-      <footer className="lfoot">
+      <footer className="lfoot" id="about">
         <Brand size={18} />
         <p>Built for the NASA Space Apps Challenge 2026. Not affiliated with or endorsed by NASA. Ephemeris: JPL DE421. Imagery: NASA Moon Trek / LROC.</p>
       </footer>
